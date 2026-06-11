@@ -107,7 +107,9 @@ Thumbs.db
 # -----------------------------------------------------------------------
 # Data Files (can be large, regenerate from MT5)
 # -----------------------------------------------------------------------
-data/
+# Only ignore a top-level /data/ directory (raw market data dumps).
+# Do NOT ignore src/data/ (source package) or tests/unit/data/ (tests).
+/data/
 *.csv.gz
 *.feather
 *.parquet

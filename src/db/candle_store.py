@@ -1,15 +1,15 @@
 """
 M02 — Candle Storage: CandleStore
 Core CRUD operations for OHLCV candle data.
-Version: 3.1 (Phase 0)
+Version: 3.1 (Phase 1 Sprint 1)
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, distinct, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -273,6 +273,87 @@ class CandleStore:
                 })
 
         return gaps
+
+    def delete_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> int:
+        """
+        Delete candles for a symbol/timeframe, optionally within a date range.
+
+        Args:
+            symbol:    Trading pair
+            timeframe: Timeframe string
+            start:     If provided, delete only candles at or after this time
+            end:       If provided, delete only candles at or before this time
+
+        Returns:
+            Number of rows deleted
+        """
+        conditions = [
+            Candle.symbol    == symbol,
+            Candle.timeframe == timeframe,
+        ]
+        if start is not None:
+            conditions.append(Candle.timestamp >= start)
+        if end is not None:
+            conditions.append(Candle.timestamp <= end)
+
+        stmt = delete(Candle).where(and_(*conditions))
+        result = self.session.execute(stmt)
+        return result.rowcount  # type: ignore[return-value]
+
+    def get_symbols(self) -> List[str]:
+        """Return a sorted list of all distinct symbols in the candles table."""
+        stmt = select(distinct(Candle.symbol)).order_by(Candle.symbol)
+        return list(self.session.scalars(stmt).all())
+
+    def get_timeframes(self, symbol: Optional[str] = None) -> List[str]:
+        """
+        Return a sorted list of distinct timeframes.
+        If *symbol* is provided, only timeframes for that symbol are returned.
+        """
+        stmt = select(distinct(Candle.timeframe))
+        if symbol:
+            stmt = stmt.where(Candle.symbol == symbol)
+        stmt = stmt.order_by(Candle.timeframe)
+        return list(self.session.scalars(stmt).all())
+
+    def store_candle_data_list(self, candle_data_list) -> int:
+        """
+        Convenience method: accept a list of CandleData DTOs, convert to ORM
+        objects, and upsert them.  Avoids requiring callers to import Candle.
+
+        Args:
+            candle_data_list: List of src.types.CandleData instances
+
+        Returns:
+            Number of candles stored/updated
+        """
+        from datetime import timezone as _tz
+
+        candles: List[Candle] = []
+        for cd in candle_data_list:
+            ts = cd.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=_tz.utc)
+            candles.append(
+                Candle(
+                    symbol    = cd.symbol.upper(),
+                    timeframe = cd.timeframe.upper(),
+                    timestamp = ts,
+                    open      = cd.open,
+                    high      = cd.high,
+                    low       = cd.low,
+                    close     = cd.close,
+                    volume    = cd.volume,
+                    spread    = cd.spread,
+                )
+            )
+        return self.store_candles(candles)
 
     def validate_data_integrity(
         self,

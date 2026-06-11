@@ -1,142 +1,110 @@
-# CandleStickBot v3.1 — Automated Forex Trading Bot
+# CandleStickBot
 
-> **Based on: The Candlestick Trading Bible**  
-> Phase 0 Implementation — Repository Bootstrap & Architecture Foundation
+**Automated Forex Trading System — v3.1 (Phase 0)**
+
+> _"The market is not random. It is a structured game of probability. Master the structure, master the outcome."_
+> — The Candlestick Trading Bible
 
 ---
 
 ## Overview
 
-CandleStickBot is a professional automated forex trading system implementing the strategies and principles from *The Candlestick Trading Bible*. Built in Python 3.13 with a strict 19-module, 4-layer architecture enforcing disciplined risk management and evidence-based pattern trading.
+CandleStickBot is a Python-based automated forex trading system built on the principles of **The Candlestick Trading Bible**. It combines candlestick pattern recognition, market structure analysis, and a rigorous trade quality scoring system (TQS) to trade EURUSD on the daily timeframe.
 
-**Phase 1 MVP Scope:** EURUSD D1 — Pin Bar + Engulfing Bar strategies — Backtest → Paper mode only.
+### Core Philosophy
+
+1. **Structure First** — Never trade against the trend. Higher Highs + Higher Lows = Long only.
+2. **Level Confluence** — Patterns must form at key S/R levels or the 21 SMA.
+3. **Quality Gating** — Every potential trade receives a 0–100 Trade Quality Score. Only 60+ trades.
+4. **Systematic Risk** — 1% risk per trade, 2% hard cap, 10% drawdown kill switch. No exceptions.
 
 ---
 
 ## Architecture
 
-### 4-Layer Architecture
+The system is structured as **19 modules across 4 layers**:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  LAYER 4: PRESENTATION (M13, M14, M15, M19)                    │
-│  Logging · Dashboard · Config · Trade Review                    │
-├─────────────────────────────────────────────────────────────────┤
-│  LAYER 3: STRATEGY & EXECUTION (M08, M09, M10, M11, M12, M17) │
-│  Strategy Engine · Risk Management · Execution · Backtesting   │
-├─────────────────────────────────────────────────────────────────┤
-│  LAYER 2: ANALYSIS (M03, M04, M05, M06, M07, M16, M18)        │
-│  Market Structure · Trend · S/R · Patterns · Regime · Analytics│
-├─────────────────────────────────────────────────────────────────┤
-│  LAYER 1: DATA INFRASTRUCTURE (M01, M02, M15)                  │
-│  MT5 Ingestion · Candle Storage · Database                     │
-└─────────────────────────────────────────────────────────────────┘
+Layer 1 — Data Infrastructure
+  M01  DataIngestionEngine     — MT5 OHLCV data fetch, backfill, CSV load
+  M02  CandleStore             — SQLite/PostgreSQL persistent storage
+  M13  AuditLogger             — Structured JSON decision audit trail
+  M15  ConfigSystem            — Pydantic v2 YAML config with validation
+
+Layer 2 — Analysis Engine
+  M03  MarketStructureAnalyzer — Swing H/L detection, HH/HL/LH/LL, BOS
+  M04  TrendDetectionEngine    — 21 SMA + swing structure trend classification
+  M05  SRLevelEngine           — Swing S/R level detection, clustering
+  M06  FibonacciEngine         — Fib retracement levels (Phase 2+)
+  M16  RegimeClassifier        — ATR/ADX/BB-width market regime (TRENDING/RANGING/VOLATILE/QUIET)
+
+Layer 3 — Strategy & Risk
+  M07  PatternDetector         — Pin Bar, Engulfing Bar (Phase 1); Inside Bar, False Breakout (Phase 2+)
+  M08  StrategyEngine          — TQS computation, signal generation, trade recommendation
+  M09  RiskEngine              — Position sizing, kill switch, drawdown/loss limits
+  M10  TradeExecutor           — Order management, MT5 EA bridge
+  M11  BacktestEngine          — Historical simulation, walk-forward, Monte Carlo
+  M12  OptimizationEngine      — Parameter optimization with governance policy (Phase 2+)
+  M17  PortfolioEngine         — Multi-pair heat/correlation management (Phase 2+)
+
+Layer 4 — Reporting & Governance
+  M14  Dashboard               — CLI/web status monitor
+  M18  PerformanceAnalytics    — Strategy scorecard, degradation alerts
+  M19  TradeReviewClassifier   — Loss classification, systematic error detection
 ```
-
-### 19-Module Map
-
-| Module | Name | Layer | Phase 1 |
-|--------|------|-------|---------|
-| M01 | Data Ingestion (MT5) | Data | ✅ Stub |
-| M02 | Candle Storage (CandleStore) | Data | ✅ Complete |
-| M03 | Market Structure Analyzer | Analysis | ✅ Stub |
-| M04 | Trend Detection (21 SMA + ADX) | Analysis | ✅ Stub |
-| M05 | S/R Engine (Swing + SMA) | Analysis | ✅ Stub |
-| M06 | Fibonacci Engine | Analysis | ❌ Phase 2 |
-| M07 | Pattern Detection (Pin Bar + Engulfing) | Analysis | ✅ Stub |
-| M08 | Strategy Engine (TQS Gate) | Strategy | ✅ Stub |
-| M09 | Risk Management Engine | Strategy | ✅ Stub |
-| M10 | Trade Executor | Strategy | ✅ Stub |
-| M11 | Backtesting Engine | Strategy | ✅ Stub |
-| M12 | Optimization Engine | Strategy | ❌ Phase 2 |
-| M13 | Audit Logger (structlog) | Presentation | ✅ Complete |
-| M14 | Dashboard Monitor | Presentation | ✅ Stub |
-| M15 | Config System (Pydantic v2) | Presentation | ✅ Complete |
-| M16 | Market Regime Engine | Analysis | ✅ Stub |
-| M17 | Portfolio Engine | Strategy | ❌ Phase 2 |
-| M18 | Performance Analytics | Analysis | ✅ Stub |
-| M19 | Trade Review / Loss Classifier | Presentation | ✅ Stub |
 
 ---
 
 ## Trade Quality Score (TQS)
 
-Every potential trade is scored 0-100 across 4 components:
+Every potential trade is scored 0–100 before entry:
 
-| Component | Module | Max Points | Description |
-|-----------|--------|-----------|-------------|
-| Trend | M04 | 25 | SMA position + ADX strength |
-| Level | M05 | 25 | S/R level quality and proximity |
-| Pattern | M07 | 25 | Candlestick pattern quality |
-| Regime | M16 | 25 | Market regime suitability |
+| Component | Weight | Criteria |
+|-----------|--------|----------|
+| **Trend** | 25 pts | Direction, strength, SMA position |
+| **Level** | 25 pts | S/R confluence, zone proximity |
+| **Pattern** | 25 pts | Pattern quality, wick ratios, body size |
+| **Regime** | 25 pts | ATR/ADX/Choppiness market state |
 
-**TQS Tiers:**
-- 🔴 **REJECT** (< 60): No trade
-- 🟡 **STANDARD** (60-79): Trade at 1.0% risk
-- 🟢 **PREMIUM** (≥ 80): Eligible for 1.5% risk *(disabled by default)*
+**Tiers:**
+- `REJECT` — Score < 60 → No trade
+- `STANDARD` — Score 60–79 → Trade at 1.0% risk
+- `PREMIUM` — Score ≥ 80 → Trade at 1.0% risk (1.5% opt-in disabled by default)
+
+---
+
+## Phase 1 MVP Scope
+
+| Feature | Phase 1 | Phase 2+ |
+|---------|---------|---------|
+| Symbol | EURUSD only | GBPUSD, USDJPY, AUDUSD |
+| Timeframe | D1 only | H4 added |
+| Patterns | Pin Bar + Engulfing Bar | Inside Bar, False Breakout |
+| Levels | Swing S/R + 21 SMA | + Fibonacci retracement |
+| Execution | Backtest → Paper | → Demo → Live |
+| Portfolio | Single pair | Multi-pair with heat/correlation |
+| Optimization | Disabled | Walk-forward + Monte Carlo |
+
+**Promotion Criteria (Paper → Live): 50 completed trades AND 3 calendar months** (both required)
 
 ---
 
 ## Risk Management
 
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| Default risk/trade | 1.0% | Fixed fractional |
-| Premium risk (opt-in) | 1.5% | TQS ≥ 80, disabled by default |
-| Hard cap | 2.0% | Cannot be overridden — enforced in Pydantic |
-| Min R:R ratio | 2.0:1 | Cannot be set below 2.0 |
-| Daily loss limit | 3.0% | Blocks new trades |
-| Weekly loss limit | 6.0% | Blocks new trades |
-| Kill switch — drawdown | 10.0% | Halts all trading |
-| Kill switch — losses | 7 consecutive | Halts all trading |
-| Max open trades | 3 | Phase 1 |
-
-**Kill Switch:** Activates on ANY: 10% drawdown OR 7 consecutive losses OR both daily+weekly limits simultaneously. Manual reset required.
-
----
-
-## Phase Scope
-
-### Phase 1 (Current) — MVP
-- ✅ EURUSD only (enforced by Pydantic validator)
-- ✅ D1 timeframe only
-- ✅ Pin Bar + Engulfing Bar strategies
-- ✅ Swing S/R + 21 SMA levels
-- ✅ Backtest → Paper modes
-- ❌ Fibonacci (disabled)
-- ❌ Inside Bar / False Breakout (disabled)
-- ❌ Portfolio management (disabled)
-- ❌ Optimization engine (disabled)
-- ❌ Live trading (disabled)
-
-### Phase 2 (Promotion criteria: 50 trades AND 3 months — both required)
-- Additional pairs (GBPUSD, USDJPY, AUDUSD, USDCAD)
-- H4 timeframe
-- Fibonacci retracements (M06)
-- Inside Bar + False Breakout strategies
-- Portfolio engine with correlation management (M17)
-- Optimization engine with baseline gate (M12)
-- Live trading via MT5 EA
-
----
-
-## MT5 Hybrid Architecture
-
-```
-Python (CandleStickBot)          MT5 Platform
-┌─────────────────────┐         ┌──────────────────┐
-│  M01 Data Fetch ────┼─────────┼→ Market Data      │
-│  M03-M07 Analysis   │         │                  │
-│  M08 Strategy       │         │                  │
-│  M09 Risk Check     │         │                  │
-│  M10 Order Params ──┼─────────┼→ Expert Advisor   │
-│  M11 Backtest       │  IPC    │  (order exec)     │
-│  M13 Audit Log      │         │                  │
-└─────────────────────┘         └──────────────────┘
+```yaml
+risk_per_trade_pct: 1.0       # Default: 1% per trade
+max_risk_per_trade_pct: 2.0   # Hard cap: cannot be exceeded
+min_rr_ratio: 2.0             # Minimum 1:2 reward-to-risk
+daily_loss_limit_pct: 3.0     # Max daily drawdown
+weekly_loss_limit_pct: 6.0    # Max weekly drawdown
+kill_switch_drawdown_pct: 10.0 # Emergency stop: 10% from peak
+kill_switch_consecutive_losses: 7  # 7 losses in a row → halt
 ```
 
-Python handles: All analysis, risk checks, position sizing, audit logging  
-MT5 EA handles: Order placement, SL/TP management (Phase 2: live only)
+**Kill Switch Triggers** (any one):
+1. 10% drawdown from equity peak
+2. 7 consecutive losses
+3. Daily loss limit AND weekly loss limit both hit
 
 ---
 
@@ -145,152 +113,177 @@ MT5 EA handles: Order placement, SL/TP management (Phase 2: live only)
 ```
 CandleStickBot/
 ├── config/
-│   ├── default_config.yaml     # Master config (all parameters)
-│   └── local_config.yaml       # Local overrides (gitignored)
+│   └── default_config.yaml    # Master configuration (all parameters)
 ├── docs/
-│   ├── PHASE0_BLUEPRINT.md     # Implementation blueprint
-│   └── spec_v3.1.md            # Original specification
-├── migrations/                 # Alembic DB migrations
-├── reports/                    # Generated backtest reports
-├── scripts/                    # Utility scripts
+│   ├── PHASE0_BLUEPRINT.md    # Implementation plan and milestones
+│   └── spec_v3.1.md           # Original specification document
+├── migrations/
+│   └── alembic.ini            # Database migration config (Alembic)
+├── reports/                   # Backtest and performance reports
+├── scripts/                   # Utility scripts (seed data, migrations)
 ├── src/
-│   ├── analysis/               # M03, M04, M05, M16, M18
-│   ├── analytics/              # M18 performance
-│   ├── backtesting/            # M11
-│   ├── config/                 # M15 (Pydantic models + loader)
-│   ├── dashboard/              # M14
-│   ├── data/                   # M01 ingestion
-│   ├── db/                     # M02 (ORM models, CandleStore, session)
-│   ├── execution/              # M10
-│   ├── logging/                # M13 (AuditLogger)
-│   ├── optimization/           # M12 (Phase 2)
-│   ├── patterns/               # M07 (pin bar, engulfing, inside bar, false breakout)
-│   ├── risk/                   # M09
-│   ├── strategy/               # M08
-│   ├── trade_review/           # M19
-│   └── types.py                # Shared DTOs (CandleData, TQSComponents, etc.)
-├── tests/
-│   ├── conftest.py             # Shared fixtures
-│   └── unit/
-│       ├── config/             # Config loader + validation tests
-│       ├── db/                 # CandleStore + ORM tests
-│       └── logging/            # AuditLogger tests
-├── requirements.txt
-├── setup.py
-├── pytest.ini
-└── README.md
+│   ├── __init__.py
+│   ├── types.py               # Shared DTOs (CandleData, TQSComponents, etc.)
+│   ├── analysis/              # M03, M04, M05, M16
+│   ├── analytics/             # M18 performance analytics
+│   ├── backtesting/           # M11 backtest engine
+│   ├── config/                # M15 config system
+│   ├── dashboard/             # M14 monitoring dashboard
+│   ├── data/                  # M01 data ingestion
+│   ├── db/                    # M02 ORM models, session, CandleStore
+│   ├── execution/             # M10 trade executor
+│   ├── logging/               # M13 audit logger
+│   ├── optimization/          # M12 (Phase 2+)
+│   ├── patterns/              # M07 pattern detectors
+│   ├── risk/                  # M09 risk engine
+│   ├── strategy/              # M08 strategy engine + TQS
+│   └── trade_review/          # M19 loss classifier
+└── tests/
+    ├── conftest.py             # Shared fixtures
+    └── unit/                  # Unit tests by module
+        ├── config/             # 49 tests (config loader + validation)
+        ├── db/                 # 53 tests (ORM + CandleStore + types)
+        └── logging/            # 27 tests (audit logger)
 ```
 
 ---
 
-## Quick Start
+## Getting Started
 
 ### Prerequisites
+
 - Python 3.13+
-- MetaTrader 5 terminal (for live/paper data — optional for backtesting with CSV)
+- pip or pipx
 
 ### Installation
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/CandleStickBot.git
 cd CandleStickBot
-python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Install in development mode
 pip install -e ".[dev]"
 ```
 
-### Run Tests
+### Running Tests
 
 ```bash
-python3 -m pytest tests/ -v
-# Expected: 141 passed
+# All tests
+pytest tests/unit/ -v
+
+# Specific module
+pytest tests/unit/config/ -v
+pytest tests/unit/db/ -v
+pytest tests/unit/logging/ -v
 ```
 
 ### Configuration
 
-Copy and customize:
+Copy the default config and customize:
+
 ```bash
 cp config/default_config.yaml config/local_config.yaml
-# Edit local_config.yaml — this file is gitignored
+# Edit local_config.yaml with your settings
 ```
 
-Environment variable overrides:
+Or use environment variables (override any setting):
+
 ```bash
 export CSBOT__EXECUTION__MODE=paper
 export CSBOT__RISK__RISK_PER_TRADE_PCT=1.5
 ```
 
----
-
-## Configuration Reference
-
-Key parameters in `config/default_config.yaml`:
+### MT5 Configuration
 
 ```yaml
-system:
-  phase: 1                    # Current phase (1 or 2)
-  log_level: INFO
-
+# In local_config.yaml (never commit passwords)
 execution:
-  mode: backtest              # backtest | paper | live
-
-symbols:
-  - EURUSD                    # Phase 1: only EURUSD allowed
-
-risk:
-  risk_per_trade_pct: 1.0     # Default risk per trade
-  max_risk_per_trade_pct: 2.0 # Hard cap (cannot exceed)
-  min_rr_ratio: 2.0           # Minimum R:R ratio
-  daily_loss_limit_pct: 3.0
-  weekly_loss_limit_pct: 6.0
-  kill_switch_drawdown_pct: 10.0
-
-tqs:
-  min_score_to_trade: 60      # Minimum TQS to take a trade
-  premium_threshold: 80       # Premium tier threshold
+  broker: mt5
+  mt5:
+    login: 107695703
+    password: "!5UvKcSl"
+    server: "YourBroker-Server"
 ```
 
 ---
 
-## Test Coverage
+## Database
 
-| Module | Tests | Status |
-|--------|-------|--------|
-| Config Loader (M15) | 20 | ✅ All passing |
-| Config Validation (M15) | 19 | ✅ All passing |
-| CandleStore (M02) | 27 | ✅ All passing |
-| Database ORM | 14 | ✅ All passing |
-| CandleData Types | 12 | ✅ All passing |
-| AuditLogger (M13) | 27 | ✅ All passing |
-| **Total** | **141** | **✅ 141/141** |
+The system uses **SQLite** for development and **PostgreSQL** for production.
+
+```bash
+# Initialize database (auto-created on first run)
+# Tables: candles, swing_points, sr_levels, signals, trades,
+#         trade_reviews, strategy_performance, strategy_summaries,
+#         audit_logs, account_snapshots, backtest_results
+```
+
+Database migrations are managed with **Alembic** (prepared, not yet applied).
 
 ---
 
 ## Development Status
 
-**Phase 0 (Complete):** Repository bootstrap, architecture, all module scaffolds, 141 tests passing.
+### Phase 0 — Foundation (Current)
+- [x] Project structure and 19-module scaffold
+- [x] Pydantic v2 configuration system with full validation
+- [x] SQLAlchemy 2.0 ORM (11 tables)
+- [x] CandleStore CRUD with gap detection
+- [x] Structured audit logging (M13)
+- [x] Shared type DTOs
+- [x] Module stubs for all 19 modules
+- [x] **141/141 unit tests passing**
 
-**Phase 1 Sprint 1 (Next):** M01 data ingestion, MT5 connection, candle backfill.  
-**Phase 1 Sprint 2:** M03/M04/M05/M16 analysis engines — full implementation.  
-**Phase 1 Sprint 3:** M07/M08 pattern detection + strategy engine.  
-**Phase 1 Sprint 4:** M09/M10/M11 risk + execution + backtesting.  
-**Phase 1 Sprint 5:** M18/M19 analytics + first full backtest run.
+### Phase 1 — Core Engine (Next)
+- [ ] MT5 data ingestion (M01)
+- [ ] Market structure analysis (M03)
+- [ ] Trend detection (M04)
+- [ ] S/R level engine (M05)
+- [ ] Regime classifier (M16)
+- [ ] Pin Bar + Engulfing pattern detectors (M07)
+- [ ] Strategy engine with TQS computation (M08)
+- [ ] Risk engine with kill switch (M09)
+- [ ] Backtest engine (M11)
 
-See `docs/PHASE0_BLUEPRINT.md` for complete implementation plan.
+### Phase 2+ — Full System
+- [ ] Additional pairs and H4 timeframe
+- [ ] Inside Bar and False Breakout patterns
+- [ ] Fibonacci retracement levels
+- [ ] Portfolio management with heat/correlation
+- [ ] Walk-forward optimization
+- [ ] Paper trading execution bridge
+- [ ] Live trading (after 50 trades + 3 months on paper)
 
 ---
 
-## MT5 Credentials
+## Technology Stack
 
-Stored in `config/default_config.yaml` under `execution.mt5`:
-- Login: `107695703`
-- Server: configured in local_config.yaml (gitignored)
-
-⚠️ **Never commit credentials to git.** Use `local_config.yaml` (gitignored) for sensitive overrides.
+| Component | Technology |
+|-----------|-----------|
+| Language | Python 3.13 |
+| Config | Pydantic v2 + YAML |
+| Database | SQLAlchemy 2.0 + SQLite/PostgreSQL |
+| Migrations | Alembic |
+| Logging | structlog (JSON audit trail) |
+| Testing | pytest + pytest-mock + hypothesis |
+| Broker API | MetaTrader5 (Python package) |
+| Execution | MT5 Expert Advisor (EA) bridge |
 
 ---
 
 ## License
 
-Internal project. All rights reserved.
+Private — All rights reserved.
+
+---
+
+## Disclaimer
+
+This software is for educational and research purposes. Automated trading involves substantial risk of loss. Past performance does not guarantee future results. Always test thoroughly before risking real capital.

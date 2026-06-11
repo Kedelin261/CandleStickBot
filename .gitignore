@@ -1,8 +1,10 @@
 # =============================================================================
-# CandleStickBot .gitignore
+# CandleStickBot — .gitignore
 # =============================================================================
 
+# -----------------------------------------------------------------------
 # Python
+# -----------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,14 +22,18 @@ parts/
 sdist/
 var/
 wheels/
-pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
+*.pyc
+*.pyo
+*.pyd
 
-# Virtual environments
+# -----------------------------------------------------------------------
+# Virtual Environments
+# -----------------------------------------------------------------------
 .env
 .venv
 env/
@@ -35,65 +41,108 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.python-version
 
-# Environment variables (NEVER commit these)
-.env
-.env.local
-.env.*.local
+# -----------------------------------------------------------------------
+# Testing & Coverage
+# -----------------------------------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
 
-# Local config overrides (contain broker credentials)
+# -----------------------------------------------------------------------
+# Sensitive Configuration
+# -----------------------------------------------------------------------
+# NEVER commit local config (may contain credentials/tokens)
 config/local_config.yaml
 config/*.local.yaml
 
-# Database files (dev data)
-data/
+# MT5 credentials should only be in local_config.yaml (gitignored)
+# default_config.yaml contains placeholder credentials ONLY
+
+# -----------------------------------------------------------------------
+# Database Files
+# -----------------------------------------------------------------------
 *.db
 *.sqlite
 *.sqlite3
+*.db-shm
+*.db-wal
 
-# Log files
+# Wrangler local dev state (if ever used)
+.wrangler/
+
+# -----------------------------------------------------------------------
+# Logs & Reports
+# -----------------------------------------------------------------------
 logs/
 *.log
+*.log.*
 *.jsonl
+reports/*.json
+reports/*.csv
+reports/*.html
+reports/*.xlsx
 
-# MT5 files
-*.ex5
-*.ex4
-
-# Reports (generated)
-reports/
-*.html
-
-# Alembic versions (committed separately)
-# migrations/versions/
-
-# Testing
-.pytest_cache/
-.coverage
-coverage.xml
-htmlcov/
-.tox/
-nosetests.xml
-pytest_cache/
-
-# IDE
-.idea/
+# -----------------------------------------------------------------------
+# IDE & Editors
+# -----------------------------------------------------------------------
 .vscode/
+.idea/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
 
-# Jupyter
-.ipynb_checkpoints
+# -----------------------------------------------------------------------
+# Data Files (can be large, regenerate from MT5)
+# -----------------------------------------------------------------------
+data/
+*.csv.gz
+*.feather
+*.parquet
 
-# Distribution
+# -----------------------------------------------------------------------
+# Alembic
+# -----------------------------------------------------------------------
+# Keep migrations but ignore the compiled .pyc in migrations
+migrations/__pycache__/
+
+# -----------------------------------------------------------------------
+# PM2 (if ever used for process management)
+# -----------------------------------------------------------------------
+.pm2/
+ecosystem.config.js
+
+# -----------------------------------------------------------------------
+# Jupyter Notebooks (exploration only, not part of codebase)
+# -----------------------------------------------------------------------
+.ipynb_checkpoints/
+*.ipynb
+
+# -----------------------------------------------------------------------
+# Environment Files
+# -----------------------------------------------------------------------
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+*.env
+
+# -----------------------------------------------------------------------
+# Build Artifacts
+# -----------------------------------------------------------------------
 *.tar.gz
 *.zip
 *.whl
-
-# Wrangler (if any Cloudflare tools are used for dashboard)
-.wrangler/
-
-# Hypothesis
-.hypothesis/

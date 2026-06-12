@@ -187,6 +187,7 @@ class PipelineResult:
     # Internal audit
     _closed_orders: List[PaperOrder] = field(default_factory=list, repr=False)
     _r_multiples:   List[float]      = field(default_factory=list, repr=False)
+    _pnl_usd_series: List[float]    = field(default_factory=list, repr=False)  # Sprint 15 FIX-3
 
     def record_closed_order(self, order: PaperOrder) -> None:
         """Update result counters from a freshly-closed PaperOrder."""
@@ -195,6 +196,7 @@ class PipelineResult:
 
         r = order.r_multiple or 0.0
         self._r_multiples.append(r)
+        self._pnl_usd_series.append(order.pnl_usd or 0.0)  # Sprint 15 FIX-3
 
         strat = order.strategy_name.lower()
         breakdown = self.pin_bar if "pin" in strat else self.engulfing
@@ -225,7 +227,9 @@ class PipelineResult:
         if self._r_multiples:
             self.expectancy = sum(self._r_multiples) / len(self._r_multiples)
         # Max drawdown: peak-to-trough on cumulative R equity curve
-        self.max_drawdown = _compute_max_drawdown(self._r_multiples)
+        self.max_drawdown = _compute_max_drawdown_equity(   # Sprint 15 FIX-3
+            self._pnl_usd_series, self.initial_balance
+        )
         self.completed_at = datetime.now(timezone.utc)
 
     def record_review_result(self, category: LossCategory) -> None:
@@ -243,7 +247,11 @@ class PipelineResult:
 
 
 def _compute_max_drawdown(r_multiples: List[float]) -> float:
-    """Peak-to-trough drawdown on cumulative R-multiple equity curve."""
+    """
+    LEGACY — R-multiple equity curve (peak seeded at 0.0).
+    Kept for backward compatibility; PipelineResult now uses
+    _compute_max_drawdown_equity() (Sprint 15 FIX-3).
+    """
     if not r_multiples:
         return 0.0
     peak = 0.0
@@ -256,6 +264,38 @@ def _compute_max_drawdown(r_multiples: List[float]) -> float:
         dd = (peak - equity) / max(abs(peak), 1e-9) * 100
         if dd > max_dd:
             max_dd = dd
+    return max_dd
+
+
+def _compute_max_drawdown_equity(
+    pnl_usd_series: List[float],
+    initial_balance: float,
+) -> float:
+    """
+    Sprint 15 FIX-3 — Account-equity max drawdown (peak seeded at initial_balance).
+
+    equity[i] = initial_balance + sum(pnl_usd_series[:i+1])
+    peak       = running maximum of equity
+    dd%        = (peak - equity) / peak * 100
+
+    Guarantees:
+      - Empty series → 0.0%
+      - First-trade loss → small %, not astronomical
+      - Peak is always ≥ initial_balance at start, so denominator is safe
+    """
+    if not pnl_usd_series:
+        return 0.0
+    peak    = initial_balance
+    equity  = initial_balance
+    max_dd  = 0.0
+    for pnl in pnl_usd_series:
+        equity += pnl
+        if equity > peak:
+            peak = equity
+        if peak > 0:
+            dd = (peak - equity) / peak * 100.0
+            if dd > max_dd:
+                max_dd = dd
     return max_dd
 
 
@@ -433,7 +473,12 @@ class PipelineRunner:
                     context_candles,
                     market_structure=structure_a.to_market_structure(),
                 )
-                sr_a        = self._sr.analyze(context_candles)
+                sr_a        = self._sr.analyze(       # Sprint 15 FIX-1/FIX-2
+                    context_candles,
+                    swing_highs=structure_a.swing_highs,   # RC-1: wire M03→M05
+                    swing_lows=structure_a.swing_lows,     # RC-1: wire M03→M05
+                    sma21=trend_a.sma21,                   # RC-2: wire M04→M05
+                )
                 regime_a    = self._regime.analyze(
                     context_candles, adx=trend_a.adx
                 )
@@ -457,14 +502,15 @@ class PipelineRunner:
                 continue   # no signal
 
             recommendation = rec_result.recommendation
-            result.trades_generated += 1
 
-            # Filter by enabled strategies
+            # Filter by enabled strategies BEFORE incrementing counter (Sprint 15 FIX-5 / RC-7)
             strat_val = recommendation.strategy.value.lower()
             if "pin" in strat_val and not cfg.enable_pin_bar:
                 continue
             if "engulf" in strat_val and not cfg.enable_engulfing:
                 continue
+
+            result.trades_generated += 1  # RC-7: moved after strategy-enable filter
 
             # Step 7: Risk Engine
             if not cfg.risk_enabled:

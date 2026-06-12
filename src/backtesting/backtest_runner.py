@@ -226,15 +226,17 @@ class BacktestResult:
     @property
     def passes_baseline(self) -> bool:
         """
-        Baseline check: PF >= 1.1, win rate >= 40%, max drawdown <= 20%.
-        Requires at least 10 trades to be meaningful.
+        Sprint 15 FIX-4 — Canonical baseline criteria (§5 of Sprint 15 spec):
+          PF > 1.10  AND  Expectancy > 0  AND  Max DD < 25%  AND  N >= 30
+        Previously: PF >= 1.1, WR >= 40%, DD <= 20%, N >= 10.
+        Changed to align measurement layer with experiment design (RC-5).
         """
-        if self.trades_executed < 10:
+        if self.trades_executed < 30:   # RC-5: was 10, spec requires 30
             return False
         return (
-            self.profit_factor >= 1.1
-            and self.win_rate >= 0.40
-            and self.max_drawdown_pct <= 20.0
+            self.profit_factor  >  1.10    # RC-5: strict >, was >=
+            and self.expectancy_r > 0.0    # RC-5: replaced WR gate
+            and self.max_drawdown_pct < 25.0  # RC-5: < 25%, was <= 20%
         )
 
     def to_dict(self) -> dict:

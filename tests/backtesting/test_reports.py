@@ -206,7 +206,9 @@ class TestGenerateScorecard:
         assert "8.00%" in output
 
     def test_passes_baseline_yes(self):
-        result = _make_result(trades=15, pf=1.5, wr=0.55, dd=8.0)
+        # Sprint 15 FIX-4: N>=30 now required; updated trades=15 → 30.
+        # exp=0.35 is the _make_result default, satisfying Expectancy > 0.
+        result = _make_result(trades=30, pf=1.5, wr=0.55, dd=8.0)
         output = generate_scorecard(result)
         assert "YES" in output or "✅" in output
 

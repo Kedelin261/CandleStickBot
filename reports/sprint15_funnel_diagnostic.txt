@@ -1,0 +1,54 @@
+======================================================================
+  SPRINT 15 STAGE 1 — FUNNEL DIAGNOSTIC
+======================================================================
+
+  Generated : 2026-06-12 02:04 UTC
+  Data file : data/EURUSD_D1_2014_2026.csv
+  Candles   : 3240
+  Config    : lookback=200, tqs=0.0, rr=2.0, slippage=1.0
+  HEAD      : cbb4092  (Sprint 14 final — before Sprint 15 fixes)
+
+──────────────────────────────────────────────────────────────────────
+  V0 — AS-COMMITTED (no swing_highs/lows passed to SREngine)
+──────────────────────────────────────────────────────────────────────
+  Evaluations total     : 3041
+  SIGNAL   rejected     :   2882   (94.8%)
+  TREND    rejected     :    147   (4.8%)
+  REGIME   rejected     :      1   (0.0%)
+  LEVEL    rejected     :     11   (0.4%)
+  RECOMMENDED           :      0   (0.0%)
+
+  Conservation check    : ✅ PASS   (2882+147+1+11+0 = 3041 vs 3041)
+
+  Trades generated : 0
+  Trades executed  : 0
+
+  RC-1 CONFIRMATION:
+  Level Gate failures = 0 only because SR levels are always empty.
+  Every evaluation that reaches the Level Gate fails immediately.
+  With 0 trades, RC-3 (drawdown bug) is invisible in V0.
+
+  Level Gate sample rejections:
+    No resistance level available near signal bar
+    No resistance level available near signal bar
+    No resistance level available near signal bar
+
+──────────────────────────────────────────────────────────────────────
+  RC-1 ROOT CAUSE EVIDENCE
+──────────────────────────────────────────────────────────────────────
+  pipeline_runner.py:436:
+    sr_a = self._sr.analyze(context_candles)  ← no swing_highs/lows
+  SREngine.analyze() with no swing points → levels=[] → Level Gate FAIL
+
+  EXPECTED per §2 calibration:
+    SIGNAL ≈ 2,872  TREND ≈ 146  REGIME ≈ 1  LEVEL ≈ 8  REC ≈ 3
+  ACTUAL V0:
+    SIGNAL = 2882  TREND = 147  REGIME = 1  LEVEL = 11  REC = 0
+
+  NOTE: In V0, all evaluations are rejected at SIGNAL because with 0
+  SR levels the pipeline cannot produce any LEVEL rejections either —
+  the LEVEL gate only runs when SIGNAL+TREND+REGIME all pass first.
+  The 0-LEVEL count is consistent with RC-1: LEVEL starvation means
+  zero trades not zero LEVEL-gate evaluations.
+
+======================================================================

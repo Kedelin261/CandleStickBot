@@ -143,13 +143,17 @@ def _default_result(**kwargs) -> BacktestResult:
 
 
 def _passing_result(**kwargs) -> BacktestResult:
-    """A BacktestResult that satisfies passes_baseline."""
+    """A BacktestResult that satisfies passes_baseline.
+    Sprint 15 FIX-4: updated to use canonical criteria (N>=30, PF>1.10,
+    Expectancy>0, DD<25%). Previously N>=10, WR>=40%, DD<=20%.
+    """
     r = _default_result(
-        trades_executed=20,
-        wins=10,
-        losses=10,
-        win_rate=0.50,
+        trades_executed=30,       # FIX-4: was 20, spec requires >=30
+        wins=16,
+        losses=14,
+        win_rate=0.53,
         profit_factor=1.50,
+        expectancy_r=0.15,        # FIX-4: Expectancy>0 now required
         max_drawdown_pct=10.0,
         **kwargs,
     )
@@ -305,72 +309,86 @@ class TestBacktestResultProperties:
         assert r.is_successful is False
 
     def test_passes_baseline_too_few_trades(self):
+        """Sprint 15 FIX-4: N<30 → fails (was N<10)."""
         r = _default_result(
-            trades_executed=5,
+            trades_executed=29,   # FIX-4: threshold now 30
             win_rate=0.60,
             profit_factor=1.5,
+            expectancy_r=0.3,
             max_drawdown_pct=5.0,
         )
         assert r.passes_baseline is False
 
     def test_passes_baseline_low_pf(self):
+        """Sprint 15 FIX-4: PF=1.10 exactly fails (strict >, was >=)."""
         r = _default_result(
-            trades_executed=20,
+            trades_executed=30,
             win_rate=0.50,
-            profit_factor=1.05,   # < 1.1
+            profit_factor=1.10,   # FIX-4: strict > means 1.10 fails
+            expectancy_r=0.10,
             max_drawdown_pct=5.0,
         )
         assert r.passes_baseline is False
 
-    def test_passes_baseline_low_win_rate(self):
+    def test_passes_baseline_zero_expectancy_fails(self):
+        """Sprint 15 FIX-4: Expectancy=0 → fails (new criterion replacing WR)."""
         r = _default_result(
-            trades_executed=20,
-            win_rate=0.35,         # < 0.40
-            profit_factor=1.3,
+            trades_executed=30,
+            win_rate=0.50,
+            profit_factor=1.5,
+            expectancy_r=0.0,     # FIX-4: Expectancy must be > 0
             max_drawdown_pct=5.0,
         )
         assert r.passes_baseline is False
 
     def test_passes_baseline_high_drawdown(self):
+        """Sprint 15 FIX-4: DD=25.0% fails (threshold now <25%, was <=20%)."""
         r = _default_result(
-            trades_executed=20,
+            trades_executed=30,
             win_rate=0.50,
             profit_factor=1.5,
-            max_drawdown_pct=25.0,  # > 20%
+            expectancy_r=0.15,
+            max_drawdown_pct=25.0,  # FIX-4: < 25% strict, so 25.0 fails
         )
         assert r.passes_baseline is False
 
     def test_passes_baseline_all_conditions_met(self):
+        """Sprint 15 FIX-4: canonical criteria — N>=30, PF>1.10, Exp>0, DD<25%."""
         r = _passing_result()
         assert r.passes_baseline is True
 
-    def test_passes_baseline_exact_boundary_pf(self):
-        # PF == 1.1 exactly should pass
+    def test_passes_baseline_exact_boundary_pf_above(self):
+        """Sprint 15 FIX-4: PF=1.11 (just above 1.10 strict) → passes."""
         r = _default_result(
-            trades_executed=10,
-            win_rate=0.40,
-            profit_factor=1.1,
+            trades_executed=30,
+            win_rate=0.50,
+            profit_factor=1.11,
+            expectancy_r=0.05,
             max_drawdown_pct=20.0,
         )
         assert r.passes_baseline is True
 
-    def test_passes_baseline_exact_boundary_win_rate(self):
+    def test_passes_baseline_dd_just_under_25(self):
+        """Sprint 15 FIX-4: DD=24.99% → passes (threshold is < 25%)."""
         r = _default_result(
-            trades_executed=10,
-            win_rate=0.40,
-            profit_factor=1.2,
-            max_drawdown_pct=15.0,
-        )
-        assert r.passes_baseline is True
-
-    def test_passes_baseline_dd_exactly_20(self):
-        r = _default_result(
-            trades_executed=10,
+            trades_executed=30,
             win_rate=0.50,
             profit_factor=1.2,
-            max_drawdown_pct=20.0,
+            expectancy_r=0.10,
+            max_drawdown_pct=24.99,
         )
         assert r.passes_baseline is True
+
+    def test_passes_baseline_dd_exactly_25_fails(self):
+        """Sprint 15 FIX-4: DD=25.0% exactly → fails (strict <)."""
+        r = _default_result(
+            trades_executed=30,
+            win_rate=0.50,
+            profit_factor=1.2,
+            expectancy_r=0.10,
+            max_drawdown_pct=25.0,
+        )
+        assert r.passes_baseline is False
 
     def test_error_message_default_none(self):
         r = BacktestResult(symbol="X", timeframe="D1", strategy_mode="combined")

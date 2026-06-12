@@ -110,6 +110,9 @@ Thumbs.db
 # Only ignore a top-level /data/ directory (raw market data dumps).
 # Do NOT ignore src/data/ (source package) or tests/unit/data/ (tests).
 /data/
+# Exception: keep documentation files in data/ tracked
+!/data/README.md
+!/data/DATA_PROVENANCE.md
 *.csv.gz
 *.feather
 *.parquet

@@ -33,9 +33,12 @@ execution:
   broker: "mt5"               # mt5 | oanda | alpaca
 
   # MT5 Connection (Phase 1+)
+  # ⚠️  SECURITY: Do NOT commit real credentials here.
+  # Override these values in a local_config.yaml that is .gitignore'd.
+  # See README.md security note for credential rotation instructions.
   mt5:
-    login: 107695703
-    password: "!5UvKcSl"
+    login: 0                  # PLACEHOLDER — set via local_config.yaml
+    password: ""              # PLACEHOLDER — set via local_config.yaml
     server: ""                # MT5 broker server name (e.g. "ICMarkets-Demo")
     timeout: 60000            # Connection timeout in ms
 

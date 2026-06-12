@@ -1,0 +1,33 @@
+════════════════════════════════════════════════════════════════════
+  DATA AUTHENTICITY REPORT — Sprint 16
+════════════════════════════════════════════════════════════════════
+  File           : EURUSD_D1_2014_2026.csv
+  Run date       : 2026-06-12
+  Total rows     : 3240
+  Date range     : 2014-01-01 → 2026-06-12
+  Coverage       : 12.44 years
+────────────────────────────────────────────────────────────────────
+  ── HARD-FAIL SIGNALS ─────────────────────────────────────────
+────────────────────────────────────────────────────────────────────
+  H1 Doji rate   : 34.75%  (threshold ≥ 2%)  ❌ TRIGGERED
+  H2 Calendar    : 16 impossible bar(s)  ❌ TRIGGERED
+    → 2014-01-01, 2014-12-25, 2015-01-01, 2015-12-25, 2016-01-01 …
+  H3 Future bars : 0 bar(s)  ✅ OK
+  H4 Structural  : ✅ OK  (chrono/dupe/OHLC errors)
+  H5 Spot-checks : 0/0 fail(s)  (threshold > 2)  N/A (no refs)
+────────────────────────────────────────────────────────────────────
+  ── SOFT SIGNALS ──────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────
+  S1 Zero volume : 100.0%  ⚠️  WARN
+  S2 DOW uniform : ⚠️  WARN (suspiciously uniform)
+    Distribution  : Fri=649  Mon=648  Thu=647  Tue=648  Wed=648
+  S3 Holiday gaps: 0.1/yr  (expect ~6–12)  ⚠️  WARN
+────────────────────────────────────────────────────────────────────
+  Soft warnings  :
+    ⚠️  100% zero volume — definitive indicator of synthetic/reconstructed data
+    ⚠️  Suspiciously uniform DOW distribution (max deviation 1.0 from mean 648.0) — real feeds show non-uniform patterns from holiday adjustments
+    ⚠️  Only 0.1 holiday gaps/year detected (expect ~6–12) — real feeds have gaps for major market holidays
+────────────────────────────────────────────────────────────────────
+  CLASSIFICATION : ❌  SYNTHETIC_SUSPECT
+  Hard fails     : H1, H2
+════════════════════════════════════════════════════════════════════

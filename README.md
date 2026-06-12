@@ -203,14 +203,31 @@ export CSBOT__RISK__RISK_PER_TRADE_PCT=1.5
 ### MT5 Configuration
 
 ```yaml
-# In local_config.yaml (never commit passwords)
+# In local_config.yaml (NEVER commit this file — add it to .gitignore)
+# ⚠️  SECURITY: Replace placeholders with your own credentials.
+# Never commit real credentials to version control.
 execution:
   broker: mt5
   mt5:
-    login: 107695703
-    password: "!5UvKcSl"
+    login: YOUR_MT5_ACCOUNT_NUMBER
+    password: "YOUR_MT5_PASSWORD"
     server: "YourBroker-Server"
 ```
+
+> **⚠️ Security note (Sprint 16):**  
+> Real MT5 credentials were previously committed to this repository's git history
+> and have been removed from HEAD in this commit. The credentials in git history
+> are compromised and must be rotated.  
+> **Owner action required:**  
+> 1. Log into your MT5 broker account and change the password immediately.  
+> 2. Consider purging the secret from git history using `git filter-repo`:  
+>    ```bash  
+>    pip install git-filter-repo  
+>    git filter-repo --path README.md --invert-paths  
+>    git filter-repo --path config/default_config.yaml --invert-paths  
+>    ```  
+>    (Or use BFG Repo-Cleaner as an alternative.)  
+> 3. Force-push the cleaned history and notify all collaborators to re-clone.
 
 ---
 

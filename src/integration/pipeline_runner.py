@@ -15,9 +15,10 @@ Flow per candle (signal bar = last candle in the lookback window):
     → M09 RiskEngine
     → M10 PaperTradeExecutor  (place order)
     → Simulate future candles until TP / SL / end-of-data
-    → M10 close_order
-    → M18 StrategyAnalyticsEngine  (always)
-    → M19 TradeReviewEngine  (losses only)
+    → _finalize_closed_order()  ← single finalization gate (Sprint 12.1)
+        → PipelineResult  (always)
+        → M18 StrategyAnalyticsEngine  (always)
+        → M19 TradeReviewEngine  (losses only)
 
 Phase 1 scope:
     - EURUSD Daily only
@@ -25,6 +26,14 @@ Phase 1 scope:
     - Bullish / Bearish Engulfing
     - No Fibonacci, Inside Bar, False Breakout, Portfolio, Correlation
     - No MT5, broker, or live-execution code
+
+Sprint 12.1 change:
+    Unified finalization pathway.  Previously TP/SL closures mutated the
+    PaperOrder directly inside _try_close_on_candle() and bypassed M18/M19.
+    Now every closed trade — regardless of exit type — flows through the
+    private _finalize_closed_order() method, which is the single place
+    responsible for updating PipelineResult, M18, and M19.  This guarantees
+    PipelineResult and M18 always agree on total trades, wins, losses, P&L.
 """
 
 from __future__ import annotations
@@ -46,6 +55,7 @@ from src.execution.paper_executor import (
     ExitReason,
     PaperExecutorConfig,
     PaperOrder,
+    PaperOrderStatus,
     PaperTradeExecutor,
 )
 from src.patterns.pattern_engine import PatternEngine
@@ -262,6 +272,10 @@ class PipelineRunner:
         runner = PipelineRunner(config)
         result = runner.run(candles)
         print(runner.generate_run_report(result))
+
+    Sprint 12.1: All trade closes — TP hit, SL hit, end-of-data manual close —
+    flow through _finalize_closed_order(), ensuring PipelineResult and M18
+    always agree on every metric.
     """
 
     def __init__(self, config: Optional[PipelineConfig] = None) -> None:
@@ -317,6 +331,11 @@ class PipelineRunner:
         self._review = TradeReviewEngine()
 
         # M10 Paper Executor — wired to M18 + M19
+        # NOTE: The executor's own M18/M19 push (inside close_order) is NOT
+        # used for TP/SL simulation closes, because the pipeline drives those
+        # directly via _finalize_closed_order().  The executor's push is only
+        # invoked for end-of-data closes via executor.close_order(), but we
+        # redirect that path too (see run()) to avoid double-recording.
         exec_config = PaperExecutorConfig(
             default_slippage_pips=cfg.slippage_pips,
             pip_size=0.0001,
@@ -345,6 +364,11 @@ class PipelineRunner:
         Returns
         -------
         PipelineResult populated with performance metrics.
+
+        Sprint 12.1: every closed trade flows through _finalize_closed_order().
+        _try_close_on_candle() is now a pure detection helper that returns
+        (hit: bool, exit_price: float, exit_reason: str) without mutating
+        the order or touching analytics.
         """
         cfg = self._cfg
         result = PipelineResult(
@@ -388,19 +412,13 @@ class PipelineRunner:
 
             # ---- if we have an open order, check for TP/SL hit ----
             if open_order is not None:
-                closed = self._try_close_on_candle(open_order, signal_candle)
-                if closed:
-                    result.record_closed_order(open_order)
-                    # Tally M19 classification if loss
-                    if open_order.is_loser:
-                        review_results = self._review.get_all_results()
-                        if review_results:
-                            result.record_review_result(review_results[-1].category)
-                    account = self._update_account(account, open_order)
-                    self._risk.update_after_trade_close(
-                        open_order.r_multiple or 0.0, account
+                hit, exit_price, exit_reason = self._try_close_on_candle(
+                    open_order, signal_candle
+                )
+                if hit:
+                    account = self._finalize_closed_order(
+                        open_order, exit_price, exit_reason, result, account
                     )
-                    self._risk.update_open_trade_count(0)
                     open_order = None
                     continue   # skip signal evaluation on close candle
 
@@ -451,7 +469,6 @@ class PipelineRunner:
             # Step 7: Risk Engine
             if not cfg.risk_enabled:
                 # Bypass risk; create a synthetic approval
-                from src.execution.paper_executor import PaperExecutorConfig
                 from src.types import RiskApprovedOrder
                 approved = RiskApprovedOrder(
                     recommendation=recommendation,
@@ -496,17 +513,13 @@ class PipelineRunner:
         if open_order is not None and open_order.is_open:
             last_price = candles[-1].close
             try:
-                self._executor.close_order(
-                    open_order.order_id,
+                account = self._finalize_closed_order(
+                    open_order,
                     exit_price=last_price,
                     exit_reason=ExitReason.MANUAL_CLOSE,
+                    result=result,
+                    account=account,
                 )
-                result.record_closed_order(open_order)
-                if open_order.is_loser:
-                    review_results = self._review.get_all_results()
-                    if review_results:
-                        result.record_review_result(review_results[-1].category)
-                account = self._update_account(account, open_order)
             except Exception as exc:
                 logger.warning("M12: end-of-data close error: %s", exc)
 
@@ -640,6 +653,94 @@ class PipelineRunner:
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
+    # Sprint 12.1 — Unified finalization gate
+    # ------------------------------------------------------------------
+
+    def _finalize_closed_order(
+        self,
+        order:       PaperOrder,
+        exit_price:  float,
+        exit_reason: str,
+        result:      PipelineResult,
+        account:     AccountState,
+    ) -> AccountState:
+        """
+        The single finalization gate for every closed trade.
+
+        Responsibilities (in order):
+          1. Stamp the order as CLOSED with exit fields and computed metrics.
+          2. Push to M18 StrategyAnalyticsEngine (always).
+          3. Push to M19 TradeReviewEngine (losses only).
+          4. Tally M19 category in PipelineResult (losses only).
+          5. Record the order in PipelineResult.
+          6. Update the account state.
+          7. Notify RiskEngine of the close.
+
+        This method is the ONLY place where steps 1-7 happen, ensuring
+        PipelineResult and M18 always agree on every metric.
+
+        Parameters
+        ----------
+        order       : The PaperOrder to finalize (must be is_open == True).
+        exit_price  : Price at which the trade exits.
+        exit_reason : One of ExitReason constants.
+        result      : PipelineResult accumulator to update.
+        account     : Current AccountState (read-only; a new one is returned).
+
+        Returns
+        -------
+        Updated AccountState after incorporating this trade's P&L.
+        """
+        # --- 1. Stamp order fields ---
+        order.exit_price  = exit_price
+        order.exit_reason = exit_reason
+        order.closed_at   = datetime.now(timezone.utc)
+        order.status      = PaperOrderStatus.CLOSED
+
+        r, pnl = _calc_r_pnl(order, exit_price)
+        order.r_multiple = r
+        order.pnl_usd    = pnl
+
+        logger.debug(
+            "M12: finalize %s @ %.5f — R=%.2f PnL=$%.2f (%s)",
+            order.order_id, exit_price, r, pnl, exit_reason,
+        )
+
+        # --- 2. Push to M18 (always) ---
+        try:
+            self._executor._push_to_analytics(order)
+        except Exception as exc:
+            logger.warning(
+                "M12: M18 push failed for %s: %s", order.order_id, exc
+            )
+
+        # --- 3. Push to M19 (losses only) ---
+        if order.is_loser:
+            try:
+                self._executor._push_to_review(order)
+            except Exception as exc:
+                logger.warning(
+                    "M12: M19 push failed for %s: %s", order.order_id, exc
+                )
+
+            # --- 4. Tally M19 category in PipelineResult ---
+            review_results = self._review.get_all_results()
+            if review_results:
+                result.record_review_result(review_results[-1].category)
+
+        # --- 5. Record in PipelineResult ---
+        result.record_closed_order(order)
+
+        # --- 6. Update account ---
+        new_account = self._update_account(account, order)
+
+        # --- 7. Notify RiskEngine ---
+        self._risk.update_after_trade_close(order.r_multiple or 0.0, new_account)
+        self._risk.update_open_trade_count(0)
+
+        return new_account
+
+    # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
@@ -678,61 +779,38 @@ class PipelineRunner:
 
     @staticmethod
     def _try_close_on_candle(
-        order: PaperOrder,
+        order:  PaperOrder,
         candle: CandleData,
-    ) -> bool:
+    ) -> Tuple[bool, float, str]:
         """
         Check whether *candle* hits the order's TP or SL.
+
+        Sprint 12.1: this method is now a PURE DETECTION HELPER.
+        It does NOT mutate the order and does NOT touch analytics.
+        All mutation happens in _finalize_closed_order().
 
         For LONG:  TP hit if candle.high  >= take_profit
                    SL hit if candle.low   <= stop_loss
         For SHORT: TP hit if candle.low   <= take_profit
                    SL hit if candle.high  >= stop_loss
 
-        Returns True and closes the order in the executor if hit;
-        False if neither level is reached.
-
-        Note: we check TP first (favourable outcome first).
+        Returns
+        -------
+        (hit: bool, exit_price: float, exit_reason: str)
+        hit=False returns (False, 0.0, "").
+        TP is checked before SL (favourable outcome first).
         """
         if order.direction == "LONG":
             if candle.high >= order.take_profit:
-                order.exit_price  = order.take_profit
-                order.exit_reason = ExitReason.TP_HIT
-                order.closed_at   = candle.timestamp
-                order.status      = "CLOSED"
-                r, pnl = _calc_r_pnl(order, order.take_profit)
-                order.r_multiple  = r
-                order.pnl_usd     = pnl
-                return True
+                return True, order.take_profit, ExitReason.TP_HIT
             if candle.low <= order.stop_loss:
-                order.exit_price  = order.stop_loss
-                order.exit_reason = ExitReason.SL_HIT
-                order.closed_at   = candle.timestamp
-                order.status      = "CLOSED"
-                r, pnl = _calc_r_pnl(order, order.stop_loss)
-                order.r_multiple  = r
-                order.pnl_usd     = pnl
-                return True
+                return True, order.stop_loss, ExitReason.SL_HIT
         else:  # SHORT
             if candle.low <= order.take_profit:
-                order.exit_price  = order.take_profit
-                order.exit_reason = ExitReason.TP_HIT
-                order.closed_at   = candle.timestamp
-                order.status      = "CLOSED"
-                r, pnl = _calc_r_pnl(order, order.take_profit)
-                order.r_multiple  = r
-                order.pnl_usd     = pnl
-                return True
+                return True, order.take_profit, ExitReason.TP_HIT
             if candle.high >= order.stop_loss:
-                order.exit_price  = order.stop_loss
-                order.exit_reason = ExitReason.SL_HIT
-                order.closed_at   = candle.timestamp
-                order.status      = "CLOSED"
-                r, pnl = _calc_r_pnl(order, order.stop_loss)
-                order.r_multiple  = r
-                order.pnl_usd     = pnl
-                return True
-        return False
+                return True, order.stop_loss, ExitReason.SL_HIT
+        return False, 0.0, ""
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
   Strategy mode : engulfing_only
   Data source   : data/EURUSD_D1_2014_2026.csv
   Date range    : 2014-01-01 → 2026-06-12
-  Run completed : 2026-06-12 01:19 UTC
+  Run completed : 2026-06-12 01:24 UTC
   Candles proc  : 3240
 
 ── TRADE STATISTICS ────────────────────────────────────

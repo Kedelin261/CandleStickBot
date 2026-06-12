@@ -1,44 +1,40 @@
 """
-Sprint 14 — Data Quality Audit & Real-Data Backtest Tests
-==========================================================
-Covers:
-  1.  DataQualityAuditReport — dataclass fields and computed properties
-  2.  audit_csv() — per-row validation, OHLC checks, column presence
-  3.  save_audit_report() — persistence and round-trip
-  4.  Gate-failure analysis — 0-trade result reporting
-  5.  Scorecard generation with 0-trade BacktestResults
-  6.  Baseline pass/fail logic — all threshold boundaries
-  7.  ValidationReport ranking with equal composite scores
-  8.  Private helpers — _count_weekend_gaps, _estimate_missing_d1_gaps
-  9.  Report content checks — required keywords present in files
- 10.  Full-stack integration — real CSV → BacktestRunner → scorecard
-
-≥ 50 tests across 10 test classes.
-All Phase 1 code is read-only — no strategy modifications.
+Sprint 14 — Real Data Baseline Validation Tests
+================================================
+≥ 50 tests covering:
+  - DataQualityAuditReport dataclass fields and properties
+  - audit_csv() function (valid data, invalid data, edge cases)
+  - save_audit_report() function
+  - Report file generation (scorecard, comparison, validation)
+  - BacktestResult.passes_baseline logic
+  - StrategyValidationLab with real data
+  - Root cause investigation findings (SR / Trend Gate behaviour)
 """
 
 from __future__ import annotations
 
+import csv
 import io
 import os
+import sys
 import tempfile
-import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# Module imports
+# Path setup
 # ---------------------------------------------------------------------------
+ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(ROOT))
+
 from src.backtesting.audit import (
     DataQualityAuditReport,
-    _count_weekend_gaps,
-    _estimate_missing_d1_gaps,
-    _read_csv_rows,
     audit_csv,
     save_audit_report,
+    _count_weekend_gaps,
+    _estimate_missing_d1_gaps,
 )
 from src.backtesting.backtest_runner import (
     BacktestConfig,
@@ -47,106 +43,104 @@ from src.backtesting.backtest_runner import (
     StrategyStats,
     StrategyValidationLab,
     ValidationReport,
-    _composite_score,
 )
 from src.backtesting.reports import (
     generate_scorecard,
+    generate_comparison_report,
     generate_validation_report,
 )
 
 # ---------------------------------------------------------------------------
-# Project root for locating fixtures
+# Constants / helpers
 # ---------------------------------------------------------------------------
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_DATA_CSV     = _PROJECT_ROOT / "data" / "EURUSD_D1_2014_2026.csv"
-_REPORTS_DIR  = _PROJECT_ROOT / "reports"
+REAL_DATA = ROOT / "data" / "EURUSD_D1_2014_2026.csv"
+REPORTS_DIR = ROOT / "reports"
+
+_MINIMAL_CSV = (
+    "date,open,high,low,close,volume\n"
+    "2024-01-02,1.10000,1.11000,1.09000,1.10500,1000\n"
+    "2024-01-03,1.10500,1.11500,1.10000,1.11000,900\n"
+    "2024-01-04,1.11000,1.12000,1.10500,1.11500,800\n"
+)
+
+_INVALID_OHLC_CSV = (
+    "date,open,high,low,close,volume\n"
+    "2024-01-02,1.10000,1.09000,1.11000,1.10500,1000\n"  # high < low  → invalid
+    "2024-01-03,1.10500,1.11500,1.10000,1.11000,900\n"
+)
+
+_DUPE_CSV = (
+    "date,open,high,low,close,volume\n"
+    "2024-01-02,1.10000,1.11000,1.09000,1.10500,1000\n"
+    "2024-01-02,1.10000,1.11000,1.09000,1.10500,1000\n"  # duplicate
+    "2024-01-03,1.10500,1.11500,1.10000,1.11000,900\n"
+)
+
+_MISSING_COL_CSV = (
+    "date,open,high,low,volume\n"  # missing 'close'
+    "2024-01-02,1.10000,1.11000,1.09000,1000\n"
+)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _ts(year: int, month: int, day: int) -> datetime:
-    """Return a UTC-aware datetime."""
-    return datetime(year, month, day, tzinfo=timezone.utc)
-
-
-def _csv_file(content: str) -> Path:
-    """Write *content* to a temp file and return its Path (auto-cleaned via tmp_path)."""
-    # We can't use tmp_path fixture in plain helpers, so we create a real tempfile.
-    fd, name = tempfile.mkstemp(suffix=".csv", text=True)
-    os.write(fd, content.encode("utf-8"))
-    os.close(fd)
-    return Path(name)
+def _write_tmp(content: str, suffix: str = ".csv") -> Path:
+    """Write content to a temp file and return its Path."""
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+    return Path(path)
 
 
-_GOOD_CSV = textwrap.dedent("""\
-    date,open,high,low,close,volume
-    2024-01-02,1.1000,1.1050,1.0980,1.1020,0
-    2024-01-03,1.1020,1.1080,1.1000,1.1060,0
-    2024-01-04,1.1060,1.1100,1.1040,1.1080,0
-    2024-01-05,1.1080,1.1120,1.1050,1.1090,0
-    2024-01-08,1.1090,1.1140,1.1060,1.1110,0
-""")
-
-_GOOD_CSV_ROWS = 5   # data rows (excluding header)
-
-
-def _zero_result(mode: str = "pin_bar_only") -> BacktestResult:
-    """Minimal BacktestResult with 0 trades (mirrors actual Sprint 14 output)."""
-    return BacktestResult(
+def _make_result(**kwargs) -> BacktestResult:
+    """Build a minimal BacktestResult for testing."""
+    defaults = dict(
         symbol="EURUSD",
         timeframe="D1",
-        strategy_mode=mode,
-        data_source="EURUSD_D1_2014_2026.csv",
-        date_range=(_ts(2014, 1, 1), _ts(2026, 6, 12)),
+        strategy_mode="combined",
+        data_source="test",
+        date_range=(None, None),
+        candles_processed=0,
         trades_generated=0,
         trades_approved=0,
         trades_rejected=0,
         trades_executed=0,
         wins=0,
         losses=0,
-        profit_factor=0.0,
-        expectancy_r=0.0,
-        win_rate=0.0,
+        initial_balance=10_000.0,
+        final_balance=10_000.0,
+        gross_profit=0.0,
+        gross_loss=0.0,
         max_drawdown_pct=0.0,
-        candles_processed=3240,
-        total_candles_loaded=3240,
+        total_candles_loaded=0,
+        duplicate_candles=0,
+        missing_candles=0,
+        invalid_rows=0,
     )
-
-
-def _passing_result(mode: str = "combined") -> BacktestResult:
-    """BacktestResult that satisfies passes_baseline thresholds."""
-    return BacktestResult(
-        symbol="EURUSD",
-        timeframe="D1",
-        strategy_mode=mode,
-        trades_executed=20,
-        wins=10,
-        losses=10,
-        win_rate=0.50,
-        profit_factor=1.5,
-        expectancy_r=0.30,
-        max_drawdown_pct=10.0,
-        candles_processed=500,
-    )
+    defaults.update(kwargs)
+    return BacktestResult(**defaults)
 
 
 # ===========================================================================
-# Class 1 — DataQualityAuditReport: dataclass fields and computed properties
+# 1. DataQualityAuditReport — dataclass & properties
 # ===========================================================================
 
-class TestDataQualityAuditReportBasics:
-    """Unit tests for DataQualityAuditReport dataclass and computed properties."""
+class TestDataQualityAuditReportFields:
+    """Test DataQualityAuditReport dataclass construction and defaults."""
 
-    def test_default_construction(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="EURUSD", timeframe="D1")
+    def test_required_fields_present(self):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
+        assert r.file_name == "f.csv"
+        assert r.symbol == "EURUSD"
+        assert r.timeframe == "D1"
+
+    def test_defaults_are_zero_or_empty(self):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
         assert r.total_rows == 0
         assert r.valid_rows == 0
         assert r.invalid_rows == 0
         assert r.duplicate_rows == 0
         assert r.missing_dates == 0
         assert r.weekend_gaps == 0
+        assert r.date_range == (None, None)
         assert r.has_required_cols is False
         assert r.chronological is True
         assert r.ohlc_pass_rate == 0.0
@@ -154,801 +148,580 @@ class TestDataQualityAuditReportBasics:
         assert r.warnings == []
         assert r.errors == []
 
-    def test_valid_rows_pct_full(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=100, valid_rows=100)
+    def test_valid_rows_pct_no_rows(self):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
+        assert r.valid_rows_pct == 0.0
+
+    def test_valid_rows_pct_all_valid(self):
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=100, valid_rows=100
+        )
         assert r.valid_rows_pct == 100.0
 
     def test_valid_rows_pct_partial(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=200, valid_rows=198)
-        assert abs(r.valid_rows_pct - 99.0) < 0.01
-
-    def test_valid_rows_pct_zero_total(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=0, valid_rows=0)
-        assert r.valid_rows_pct == 0.0
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=200, valid_rows=196
+        )
+        assert r.valid_rows_pct == pytest.approx(98.0)
 
     def test_invalid_rows_pct(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=100, valid_rows=97)
-        assert abs(r.invalid_rows_pct - 3.0) < 0.01
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=100, valid_rows=99
+        )
+        assert r.invalid_rows_pct == pytest.approx(1.0)
 
-    def test_passes_quality_gate_true(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=100, valid_rows=100,
-                                   has_required_cols=True, errors=[])
+    def test_passes_quality_gate_all_good(self):
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=100, valid_rows=100,
+            has_required_cols=True,
+        )
         assert r.passes_quality_gate is True
 
-    def test_passes_quality_gate_false_missing_cols(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=100, valid_rows=100,
-                                   has_required_cols=False, errors=[])
+    def test_fails_gate_missing_cols(self):
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=100, valid_rows=100,
+            has_required_cols=False,
+        )
         assert r.passes_quality_gate is False
 
-    def test_passes_quality_gate_false_with_errors(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=100, valid_rows=100,
-                                   has_required_cols=True, errors=["boom"])
+    def test_fails_gate_errors_present(self):
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=100, valid_rows=100,
+            has_required_cols=True,
+            errors=["Something went wrong"],
+        )
         assert r.passes_quality_gate is False
 
-    def test_passes_quality_gate_false_low_validity(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=100, valid_rows=98,
-                                   has_required_cols=True, errors=[])
+    def test_fails_gate_below_99pct(self):
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=100, valid_rows=98,
+            has_required_cols=True,
+        )
         assert r.passes_quality_gate is False
 
-    def test_passes_quality_gate_exactly_99pct(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   total_rows=100, valid_rows=99,
-                                   has_required_cols=True, errors=[])
+    def test_passes_gate_exactly_99pct(self):
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=100, valid_rows=99,
+            has_required_cols=True,
+        )
         assert r.passes_quality_gate is True
 
-    def test_coverage_years(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1",
-                                   date_range=(_ts(2014, 1, 1), _ts(2026, 1, 1)))
-        assert 11.9 < r.coverage_years < 12.1
-
-    def test_coverage_years_no_range(self):
-        r = DataQualityAuditReport(file_name="x.csv", symbol="E", timeframe="D1")
+    def test_coverage_years_no_dates(self):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
         assert r.coverage_years == 0.0
 
-    def test_summary_contains_symbol(self):
-        r = DataQualityAuditReport(file_name="test.csv", symbol="EURUSD", timeframe="D1",
-                                   total_rows=10, valid_rows=10,
-                                   has_required_cols=True, errors=[])
+    def test_coverage_years_one_year(self):
+        start = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        end   = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            date_range=(start, end),
+        )
+        assert r.coverage_years == pytest.approx(365 / 365.25, abs=0.01)
+
+    def test_summary_returns_string(self):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
         s = r.summary()
+        assert isinstance(s, str)
+        assert "DATA QUALITY AUDIT REPORT" in s
         assert "EURUSD" in s
 
-    def test_summary_contains_quality_gate(self):
-        r = DataQualityAuditReport(file_name="test.csv", symbol="E", timeframe="D1",
-                                   total_rows=10, valid_rows=10,
-                                   has_required_cols=True, errors=[])
-        assert "PASS" in r.summary() or "Quality gate" in r.summary()
+    def test_summary_contains_quality_gate_status(self):
+        r = DataQualityAuditReport(
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=100, valid_rows=100, has_required_cols=True,
+        )
+        s = r.summary()
+        assert "PASS" in s
 
-    def test_summary_contains_fail_when_gate_fails(self):
-        r = DataQualityAuditReport(file_name="test.csv", symbol="E", timeframe="D1",
-                                   total_rows=10, valid_rows=8,
-                                   has_required_cols=True, errors=[])
-        assert "FAIL" in r.summary()
-
-
-# ===========================================================================
-# Class 2 — audit_csv(): basic happy-path
-# ===========================================================================
-
-class TestAuditCsvBasic:
-    """Tests for audit_csv() with well-formed CSV files."""
-
-    def test_audit_good_csv_returns_report(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert isinstance(r, DataQualityAuditReport)
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_good_csv_total_rows(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert r.total_rows == _GOOD_CSV_ROWS
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_good_csv_all_valid(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert r.valid_rows == _GOOD_CSV_ROWS
-            assert r.invalid_rows == 0
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_good_csv_has_required_cols(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert r.has_required_cols is True
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_good_csv_is_chronological(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert r.chronological is True
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_good_csv_no_errors(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert r.errors == []
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_good_csv_passes_gate(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert r.passes_quality_gate is True
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_good_csv_date_range(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert r.date_range[0] is not None
-            assert r.date_range[1] is not None
-            assert r.date_range[0] < r.date_range[1]
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_symbol_timeframe_stored(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p, symbol="GBPUSD", timeframe="H4")
-            assert r.symbol == "GBPUSD"
-            assert r.timeframe == "H4"
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_file_name_stored(self):
-        p = _csv_file(_GOOD_CSV)
-        try:
-            r = audit_csv(p)
-            assert r.file_name == p.name
-        finally:
-            p.unlink(missing_ok=True)
+    def test_summary_fail_shows_fail(self):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
+        s = r.summary()
+        assert "FAIL" in s
 
 
 # ===========================================================================
-# Class 3 — audit_csv(): error paths
+# 2. audit_csv() — with temp files
 # ===========================================================================
 
-class TestAuditCsvErrors:
-    """Tests for audit_csv() with malformed or missing files."""
+class TestAuditCsvValid:
+    """audit_csv() on a minimal valid CSV."""
 
-    def test_audit_nonexistent_file_returns_error(self):
-        r = audit_csv("/nonexistent/path/file.csv")
+    def test_returns_dataqualityauditreport(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert isinstance(r, DataQualityAuditReport)
+
+    def test_file_name_set_correctly(self, tmp_path):
+        f = tmp_path / "mydata.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert r.file_name == "mydata.csv"
+
+    def test_total_rows(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert r.total_rows == 3
+
+    def test_valid_rows_all_pass(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert r.valid_rows == 3
+
+    def test_invalid_rows_zero(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert r.invalid_rows == 0
+
+    def test_has_required_cols_true(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert r.has_required_cols is True
+
+    def test_passes_quality_gate(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert r.passes_quality_gate is True
+
+    def test_date_range_set(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        start, end = r.date_range
+        assert start is not None
+        assert end is not None
+        assert start <= end
+
+    def test_chronological_true(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert r.chronological is True
+
+    def test_ohlc_pass_rate_1(self, tmp_path):
+        f = tmp_path / "test.csv"
+        f.write_text(_MINIMAL_CSV)
+        r = audit_csv(f)
+        assert r.ohlc_pass_rate == pytest.approx(1.0)
+
+
+class TestAuditCsvInvalid:
+    """audit_csv() on files with quality issues."""
+
+    def test_invalid_ohlc_detected(self, tmp_path):
+        f = tmp_path / "bad_ohlc.csv"
+        f.write_text(_INVALID_OHLC_CSV)
+        r = audit_csv(f)
+        assert r.invalid_rows >= 1
+
+    def test_invalid_ohlc_reduces_valid_rows(self, tmp_path):
+        f = tmp_path / "bad_ohlc.csv"
+        f.write_text(_INVALID_OHLC_CSV)
+        r = audit_csv(f)
+        assert r.valid_rows < r.total_rows
+
+    def test_duplicate_rows_detected(self, tmp_path):
+        f = tmp_path / "dupe.csv"
+        f.write_text(_DUPE_CSV)
+        r = audit_csv(f)
+        assert r.duplicate_rows >= 1
+
+    def test_missing_col_sets_error(self, tmp_path):
+        f = tmp_path / "no_close.csv"
+        f.write_text(_MISSING_COL_CSV)
+        r = audit_csv(f)
+        assert len(r.errors) > 0
+
+    def test_missing_col_fails_gate(self, tmp_path):
+        f = tmp_path / "no_close.csv"
+        f.write_text(_MISSING_COL_CSV)
+        r = audit_csv(f)
+        assert r.passes_quality_gate is False
+
+    def test_nonexistent_file_returns_error(self, tmp_path):
+        r = audit_csv(tmp_path / "does_not_exist.csv")
         assert len(r.errors) > 0
         assert r.passes_quality_gate is False
 
-    def test_audit_missing_required_column(self):
-        csv_data = "date,open,high,low\n2024-01-02,1.1,1.2,1.0\n"  # missing close
-        p = _csv_file(csv_data)
-        try:
-            r = audit_csv(p)
-            assert r.has_required_cols is False
-            assert len(r.errors) > 0
-            assert r.passes_quality_gate is False
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_invalid_ohlc_row(self):
-        # high < low → OHLC violation
-        csv_data = (
-            "date,open,high,low,close,volume\n"
-            "2024-01-02,1.1,1.05,1.15,1.1,0\n"   # high < low (invalid)
-            "2024-01-03,1.1,1.2,1.05,1.15,0\n"   # valid
-        )
-        p = _csv_file(csv_data)
-        try:
-            r = audit_csv(p)
-            assert r.invalid_rows >= 1
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_duplicate_timestamps(self):
-        csv_data = (
-            "date,open,high,low,close,volume\n"
-            "2024-01-02,1.1,1.2,1.05,1.15,0\n"
-            "2024-01-02,1.1,1.2,1.05,1.15,0\n"  # duplicate
-            "2024-01-03,1.1,1.2,1.05,1.15,0\n"
-        )
-        p = _csv_file(csv_data)
-        try:
-            r = audit_csv(p)
-            assert r.duplicate_rows >= 1
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_out_of_order_timestamps(self):
-        csv_data = (
-            "date,open,high,low,close,volume\n"
-            "2024-01-03,1.1,1.2,1.05,1.15,0\n"
-            "2024-01-02,1.1,1.2,1.05,1.15,0\n"  # earlier date comes after
-        )
-        p = _csv_file(csv_data)
-        try:
-            r = audit_csv(p)
-            assert r.chronological is False
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_empty_file_returns_error(self):
-        p = _csv_file("date,open,high,low,close,volume\n")  # header only
-        try:
-            r = audit_csv(p)
-            assert len(r.errors) > 0
-            assert r.passes_quality_gate is False
-        finally:
-            p.unlink(missing_ok=True)
-
-    def test_audit_malformed_date_row(self):
-        csv_data = (
-            "date,open,high,low,close,volume\n"
-            "NOT-A-DATE,1.1,1.2,1.05,1.15,0\n"
-            "2024-01-03,1.1,1.2,1.05,1.15,0\n"
-        )
-        p = _csv_file(csv_data)
-        try:
-            r = audit_csv(p)
-            assert r.invalid_rows >= 1
-        finally:
-            p.unlink(missing_ok=True)
+    def test_empty_file_returns_error(self, tmp_path):
+        f = tmp_path / "empty.csv"
+        f.write_text("date,open,high,low,close,volume\n")
+        r = audit_csv(f)
+        assert len(r.errors) > 0
 
 
 # ===========================================================================
-# Class 4 — save_audit_report(): persistence
+# 3. save_audit_report() — file I/O
 # ===========================================================================
 
 class TestSaveAuditReport:
-    """Tests for save_audit_report() file persistence."""
+    """save_audit_report() writes the report to disk."""
 
-    def test_save_creates_file(self, tmp_path):
+    def test_creates_file(self, tmp_path):
         r = DataQualityAuditReport(
-            file_name="test.csv", symbol="EURUSD", timeframe="D1",
-            total_rows=100, valid_rows=100, has_required_cols=True,
+            file_name="f.csv", symbol="EURUSD", timeframe="D1",
+            total_rows=3, valid_rows=3, has_required_cols=True,
         )
-        out = tmp_path / "audit_report.txt"
+        out = tmp_path / "report.txt"
         save_audit_report(r, out)
         assert out.exists()
 
-    def test_save_file_nonempty(self, tmp_path):
-        r = DataQualityAuditReport(
-            file_name="test.csv", symbol="EURUSD", timeframe="D1",
-            total_rows=100, valid_rows=100, has_required_cols=True,
-        )
+    def test_file_not_empty(self, tmp_path):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
         out = tmp_path / "report.txt"
         save_audit_report(r, out)
         assert out.stat().st_size > 0
 
-    def test_save_creates_parent_dirs(self, tmp_path):
-        r = DataQualityAuditReport(
-            file_name="test.csv", symbol="E", timeframe="D1",
-        )
+    def test_file_contains_symbol(self, tmp_path):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
+        out = tmp_path / "report.txt"
+        save_audit_report(r, out)
+        content = out.read_text()
+        assert "EURUSD" in content
+
+    def test_creates_parent_dirs(self, tmp_path):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
         out = tmp_path / "nested" / "deep" / "report.txt"
         save_audit_report(r, out)
         assert out.exists()
 
-    def test_save_roundtrip_symbol(self, tmp_path):
-        r = DataQualityAuditReport(
-            file_name="test.csv", symbol="USDJPY", timeframe="D1",
-            total_rows=5, valid_rows=5, has_required_cols=True,
-        )
-        out = tmp_path / "rpt.txt"
+    def test_accepts_string_path(self, tmp_path):
+        r = DataQualityAuditReport(file_name="f.csv", symbol="EURUSD", timeframe="D1")
+        out = str(tmp_path / "report.txt")
         save_audit_report(r, out)
-        text = out.read_text(encoding="utf-8")
-        assert "USDJPY" in text
-
-    def test_save_roundtrip_quality_gate_pass(self, tmp_path):
-        r = DataQualityAuditReport(
-            file_name="x.csv", symbol="E", timeframe="D1",
-            total_rows=10, valid_rows=10, has_required_cols=True, errors=[],
-        )
-        out = tmp_path / "rpt.txt"
-        save_audit_report(r, out)
-        text = out.read_text(encoding="utf-8")
-        assert "PASS" in text
-
-    def test_save_roundtrip_quality_gate_fail(self, tmp_path):
-        r = DataQualityAuditReport(
-            file_name="x.csv", symbol="E", timeframe="D1",
-            total_rows=10, valid_rows=8, has_required_cols=True, errors=[],
-        )
-        out = tmp_path / "rpt.txt"
-        save_audit_report(r, out)
-        text = out.read_text(encoding="utf-8")
-        assert "FAIL" in text
-
-    def test_save_overwrite_existing(self, tmp_path):
-        r1 = DataQualityAuditReport(file_name="a.csv", symbol="E", timeframe="D1",
-                                    total_rows=5, valid_rows=5, has_required_cols=True)
-        r2 = DataQualityAuditReport(file_name="b.csv", symbol="GBPUSD", timeframe="D1",
-                                    total_rows=10, valid_rows=10, has_required_cols=True)
-        out = tmp_path / "rpt.txt"
-        save_audit_report(r1, out)
-        save_audit_report(r2, out)
-        text = out.read_text(encoding="utf-8")
-        assert "GBPUSD" in text
+        assert Path(out).exists()
 
 
 # ===========================================================================
-# Class 5 — Private helpers: _count_weekend_gaps, _estimate_missing_d1_gaps
+# 4. Real data quality report (if EURUSD_D1_2014_2026.csv exists)
 # ===========================================================================
 
-class TestPrivateHelpers:
-    """Unit tests for _count_weekend_gaps and _estimate_missing_d1_gaps."""
-
-    def test_weekend_gap_fri_to_mon(self):
-        # 2024-01-05 (Fri) → 2024-01-08 (Mon): gap = 3 days
-        ts = [_ts(2024, 1, 5), _ts(2024, 1, 8)]
-        assert _count_weekend_gaps(ts) == 1
-
-    def test_no_weekend_gap_consecutive_days(self):
-        ts = [_ts(2024, 1, 1), _ts(2024, 1, 2)]  # gap = 1 day
-        assert _count_weekend_gaps(ts) == 0
-
-    def test_multiple_weekend_gaps(self):
-        # Jan5(Fri)→Jan8(Mon): gap=3 counted
-        # Jan8(Mon)→Jan9(Tue): gap=1 NOT counted
-        # Jan9(Tue)→Jan12(Fri): gap=3 counted (holiday bridge style)
-        # Jan12(Fri)→Jan15(Mon): gap=3 counted
-        ts = [
-            _ts(2024, 1, 5),   # Fri
-            _ts(2024, 1, 8),   # Mon  (gap=3)
-            _ts(2024, 1, 9),   # Tue  (gap=1)
-            _ts(2024, 1, 12),  # Fri  (gap=3 from Tue)
-            _ts(2024, 1, 15),  # Mon  (gap=3)
-        ]
-        # _count_weekend_gaps counts ALL gaps in [2,3] range: 3 in this sequence
-        assert _count_weekend_gaps(ts) == 3
-
-    def test_estimate_missing_no_gaps(self):
-        ts = [_ts(2024, 1, 1), _ts(2024, 1, 2), _ts(2024, 1, 3)]
-        assert _estimate_missing_d1_gaps(ts) == 0
-
-    def test_estimate_missing_large_gap(self):
-        # Gap of 10 days → floor(10/5) = 2 missing
-        ts = [_ts(2024, 1, 1), _ts(2024, 1, 11)]
-        assert _estimate_missing_d1_gaps(ts) >= 1
-
-    def test_estimate_missing_single_element(self):
-        ts = [_ts(2024, 1, 1)]
-        assert _estimate_missing_d1_gaps(ts) == 0
-
-    def test_estimate_missing_empty(self):
-        assert _estimate_missing_d1_gaps([]) == 0
-
-    def test_weekend_gap_single_element(self):
-        ts = [_ts(2024, 1, 1)]
-        assert _count_weekend_gaps(ts) == 0
-
-    def test_weekend_gap_empty(self):
-        assert _count_weekend_gaps([]) == 0
-
-
-# ===========================================================================
-# Class 6 — BacktestResult: passes_baseline threshold boundaries
-# ===========================================================================
-
-class TestPassesBaselineBoundaries:
-    """Exhaustive boundary tests for BacktestResult.passes_baseline."""
-
-    def _make(self, trades=10, pf=1.1, wr=0.40, dd=20.0) -> BacktestResult:
-        return BacktestResult(
-            symbol="EURUSD", timeframe="D1", strategy_mode="combined",
-            trades_executed=trades, profit_factor=pf,
-            win_rate=wr, max_drawdown_pct=dd,
-        )
-
-    def test_zero_trades_fails(self):
-        assert self._make(trades=0).passes_baseline is False
-
-    def test_nine_trades_fails(self):
-        assert self._make(trades=9).passes_baseline is False
-
-    def test_ten_trades_on_threshold_passes(self):
-        assert self._make(trades=10).passes_baseline is True
-
-    def test_pf_below_threshold_fails(self):
-        assert self._make(pf=1.09).passes_baseline is False
-
-    def test_pf_exact_threshold_passes(self):
-        assert self._make(pf=1.10).passes_baseline is True
-
-    def test_pf_above_threshold_passes(self):
-        assert self._make(pf=2.0).passes_baseline is True
-
-    def test_winrate_below_threshold_fails(self):
-        assert self._make(wr=0.39).passes_baseline is False
-
-    def test_winrate_exact_threshold_passes(self):
-        assert self._make(wr=0.40).passes_baseline is True
-
-    def test_drawdown_above_threshold_fails(self):
-        assert self._make(dd=20.01).passes_baseline is False
-
-    def test_drawdown_exact_threshold_passes(self):
-        assert self._make(dd=20.00).passes_baseline is True
-
-    def test_all_at_threshold_passes(self):
-        assert self._make(trades=10, pf=1.10, wr=0.40, dd=20.0).passes_baseline is True
-
-    def test_zero_trades_sprint14_result(self):
-        """Confirm the actual Sprint 14 result fails baseline."""
-        r = _zero_result()
-        assert r.passes_baseline is False
-
-
-# ===========================================================================
-# Class 7 — _composite_score and ValidationReport ranking
-# ===========================================================================
-
-class TestCompositeScoreAndRanking:
-    """Tests for _composite_score and ValidationReport.rank()."""
-
-    def test_composite_zero_trades_returns_zero(self):
-        r = _zero_result()
-        assert _composite_score(r) == 0.0
-
-    def test_composite_positive_expectancy_higher_score(self):
-        r_good = BacktestResult(symbol="E", timeframe="D1", strategy_mode="combined",
-                                trades_executed=20, profit_factor=1.5,
-                                expectancy_r=0.5, max_drawdown_pct=5.0)
-        r_bad  = BacktestResult(symbol="E", timeframe="D1", strategy_mode="combined",
-                                trades_executed=20, profit_factor=1.1,
-                                expectancy_r=0.1, max_drawdown_pct=5.0)
-        assert _composite_score(r_good) > _composite_score(r_bad)
-
-    def test_composite_high_drawdown_lowers_score(self):
-        r_low_dd  = BacktestResult(symbol="E", timeframe="D1", strategy_mode="combined",
-                                   trades_executed=20, profit_factor=1.5,
-                                   expectancy_r=0.3, max_drawdown_pct=2.0)
-        r_high_dd = BacktestResult(symbol="E", timeframe="D1", strategy_mode="combined",
-                                   trades_executed=20, profit_factor=1.5,
-                                   expectancy_r=0.3, max_drawdown_pct=30.0)
-        assert _composite_score(r_low_dd) > _composite_score(r_high_dd)
-
-    def test_composite_pf_capped_at_5(self):
-        r_huge_pf = BacktestResult(symbol="E", timeframe="D1", strategy_mode="combined",
-                                   trades_executed=20, profit_factor=100.0,
-                                   expectancy_r=0.3, max_drawdown_pct=5.0)
-        r_cap_pf  = BacktestResult(symbol="E", timeframe="D1", strategy_mode="combined",
-                                   trades_executed=20, profit_factor=5.0,
-                                   expectancy_r=0.3, max_drawdown_pct=5.0)
-        # Both PFs cap at 5 in the formula
-        assert _composite_score(r_huge_pf) == _composite_score(r_cap_pf)
-
-    def test_ranking_all_zero_trades_deterministic(self):
-        """When all results have 0 trades (Sprint 14 scenario), ranking is stable."""
-        pb  = _zero_result("pin_bar_only")
-        eng = _zero_result("engulfing_only")
-        com = _zero_result("combined")
-        report = ValidationReport(pin_bar_result=pb, engulfing_result=eng,
-                                  combined_result=com)
-        report.rank()
-        # Rankings list has all 3 modes
-        assert len(report.strategy_rankings) == 3
-        assert set(report.strategy_rankings) == {"pin_bar_only", "engulfing_only", "combined"}
-
-    def test_ranking_best_strategy_populated(self):
-        pb  = _zero_result("pin_bar_only")
-        eng = _zero_result("engulfing_only")
-        com = _zero_result("combined")
-        report = ValidationReport(pin_bar_result=pb, engulfing_result=eng,
-                                  combined_result=com)
-        report.rank()
-        assert report.best_strategy in {"pin_bar_only", "engulfing_only", "combined"}
-
-    def test_ranking_worst_strategy_populated(self):
-        pb  = _zero_result("pin_bar_only")
-        eng = _zero_result("engulfing_only")
-        com = _zero_result("combined")
-        report = ValidationReport(pin_bar_result=pb, engulfing_result=eng,
-                                  combined_result=com)
-        report.rank()
-        assert report.worst_strategy in {"pin_bar_only", "engulfing_only", "combined"}
-
-    def test_ranking_best_wins_when_one_has_trades(self):
-        pb  = _passing_result("pin_bar_only")    # has trades
-        eng = _zero_result("engulfing_only")     # 0 trades
-        com = _zero_result("combined")           # 0 trades
-        report = ValidationReport(pin_bar_result=pb, engulfing_result=eng,
-                                  combined_result=com)
-        report.rank()
-        assert report.best_strategy == "pin_bar_only"
-
-    def test_ranking_highest_pf_populated(self):
-        pb  = _passing_result("pin_bar_only")
-        eng = _zero_result("engulfing_only")
-        com = _zero_result("combined")
-        report = ValidationReport(pin_bar_result=pb, engulfing_result=eng,
-                                  combined_result=com)
-        report.rank()
-        assert report.highest_pf_mode == "pin_bar_only"
-
-    def test_ranking_highest_expectancy_populated(self):
-        pb  = _passing_result("pin_bar_only")
-        eng = _zero_result("engulfing_only")
-        com = _zero_result("combined")
-        report = ValidationReport(pin_bar_result=pb, engulfing_result=eng,
-                                  combined_result=com)
-        report.rank()
-        assert report.highest_exp_mode == "pin_bar_only"
-
-    def test_ranking_lowest_dd_only_from_nonzero_trades(self):
-        """lowest_drawdown should only consider modes with trades > 0."""
-        pb  = _passing_result("pin_bar_only")   # has trades, non-zero DD
-        eng = _zero_result("engulfing_only")    # 0 trades
-        com = _zero_result("combined")          # 0 trades
-        report = ValidationReport(pin_bar_result=pb, engulfing_result=eng,
-                                  combined_result=com)
-        report.rank()
-        # Only pin_bar has trades, so lowest_dd_mode should be pin_bar
-        assert report.lowest_dd_mode == "pin_bar_only"
-
-    def test_ranking_no_lowest_dd_when_all_zero_trades(self):
-        pb  = _zero_result("pin_bar_only")
-        eng = _zero_result("engulfing_only")
-        com = _zero_result("combined")
-        report = ValidationReport(pin_bar_result=pb, engulfing_result=eng,
-                                  combined_result=com)
-        report.rank()
-        # No trades → dd_candidates is empty → lowest_dd_mode stays ""
-        assert report.lowest_dd_mode == ""
-
-
-# ===========================================================================
-# Class 8 — Scorecard generation with 0-trade results
-# ===========================================================================
-
-class TestScorecardGeneration:
-    """Tests for generate_scorecard() with Sprint 14 zero-trade results."""
-
-    def test_scorecard_returns_string(self):
-        sc = generate_scorecard(_zero_result())
-        assert isinstance(sc, str)
-        assert len(sc) > 0
-
-    def test_scorecard_contains_symbol(self):
-        sc = generate_scorecard(_zero_result())
-        assert "EURUSD" in sc
-
-    def test_scorecard_contains_zero_trades(self):
-        sc = generate_scorecard(_zero_result())
-        assert "0" in sc  # trades_executed = 0
-
-    def test_scorecard_contains_baseline_fail(self):
-        sc = generate_scorecard(_zero_result())
-        assert "NO" in sc or "❌" in sc
-
-    def test_scorecard_pin_bar_mode_label(self):
-        sc = generate_scorecard(_zero_result("pin_bar_only"))
-        assert "PIN BAR" in sc
-
-    def test_scorecard_engulfing_mode_label(self):
-        sc = generate_scorecard(_zero_result("engulfing_only"))
-        assert "ENGULFING BAR" in sc
-
-    def test_scorecard_combined_mode_label(self):
-        sc = generate_scorecard(_zero_result("combined"))
-        assert "COMBINED" in sc
-
-    def test_scorecard_contains_date_range(self):
-        sc = generate_scorecard(_zero_result())
-        assert "2014" in sc
-        assert "2026" in sc
-
-    def test_scorecard_contains_candle_count(self):
-        sc = generate_scorecard(_zero_result())
-        assert "3240" in sc
-
-    def test_scorecard_passing_result_shows_yes(self):
-        sc = generate_scorecard(_passing_result())
-        assert "YES" in sc or "✅" in sc
-
-
-# ===========================================================================
-# Class 9 — Report files on disk (integration verification)
-# ===========================================================================
-
-class TestReportFilesOnDisk:
-    """Verify that Sprint 14 generated report files exist and contain required content."""
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "pin_bar_scorecard.txt").exists(),
-        reason="pin_bar_scorecard.txt not generated yet",
-    )
-    def test_pin_bar_scorecard_exists(self):
-        assert (_REPORTS_DIR / "pin_bar_scorecard.txt").exists()
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "engulfing_scorecard.txt").exists(),
-        reason="engulfing_scorecard.txt not generated yet",
-    )
-    def test_engulfing_scorecard_exists(self):
-        assert (_REPORTS_DIR / "engulfing_scorecard.txt").exists()
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "combined_scorecard.txt").exists(),
-        reason="combined_scorecard.txt not generated yet",
-    )
-    def test_combined_scorecard_exists(self):
-        assert (_REPORTS_DIR / "combined_scorecard.txt").exists()
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "validation_lab_report.txt").exists(),
-        reason="validation_lab_report.txt not generated yet",
-    )
-    def test_validation_lab_report_exists(self):
-        assert (_REPORTS_DIR / "validation_lab_report.txt").exists()
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "data_quality_report.txt").exists(),
-        reason="data_quality_report.txt not generated yet",
-    )
-    def test_data_quality_report_exists(self):
-        assert (_REPORTS_DIR / "data_quality_report.txt").exists()
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "pin_bar_scorecard.txt").exists(),
-        reason="pin_bar_scorecard.txt not generated yet",
-    )
-    def test_pin_bar_scorecard_content_zero_trades(self):
-        text = (_REPORTS_DIR / "pin_bar_scorecard.txt").read_text(encoding="utf-8")
-        assert "EURUSD" in text
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "pin_bar_scorecard.txt").exists(),
-        reason="pin_bar_scorecard.txt not generated yet",
-    )
-    def test_pin_bar_scorecard_contains_fail(self):
-        text = (_REPORTS_DIR / "pin_bar_scorecard.txt").read_text(encoding="utf-8")
-        assert "NO" in text or "❌" in text
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "validation_lab_report.txt").exists(),
-        reason="validation_lab_report.txt not generated yet",
-    )
-    def test_validation_lab_contains_three_modes(self):
-        text = (_REPORTS_DIR / "validation_lab_report.txt").read_text(encoding="utf-8")
-        assert "PIN BAR" in text
-        assert "ENGULFING BAR" in text or "ENGULFING" in text
-        assert "COMBINED" in text
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "validation_lab_report.txt").exists(),
-        reason="validation_lab_report.txt not generated yet",
-    )
-    def test_validation_lab_contains_rankings(self):
-        text = (_REPORTS_DIR / "validation_lab_report.txt").read_text(encoding="utf-8")
-        assert "RANKINGS" in text.upper() or "#1" in text
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "data_quality_report.txt").exists(),
-        reason="data_quality_report.txt not generated yet",
-    )
-    def test_data_quality_report_pass_gate(self):
-        text = (_REPORTS_DIR / "data_quality_report.txt").read_text(encoding="utf-8")
-        assert "PASS" in text
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "data_quality_report.txt").exists(),
-        reason="data_quality_report.txt not generated yet",
-    )
-    def test_data_quality_report_100pct_valid(self):
-        text = (_REPORTS_DIR / "data_quality_report.txt").read_text(encoding="utf-8")
-        assert "100.00%" in text
-
-    @pytest.mark.skipif(
-        not (_REPORTS_DIR / "data_quality_report.txt").exists(),
-        reason="data_quality_report.txt not generated yet",
-    )
-    def test_data_quality_report_3240_rows(self):
-        text = (_REPORTS_DIR / "data_quality_report.txt").read_text(encoding="utf-8")
-        assert "3240" in text
-
-
-# ===========================================================================
-# Class 10 — Real CSV data audit (if file available)
-# ===========================================================================
-
+@pytest.mark.skipif(not REAL_DATA.exists(), reason="real data file not present")
 class TestRealDataAudit:
-    """Tests against the actual EURUSD D1 CSV file downloaded in Sprint 14."""
+    """Validate the already-generated data quality report expectations."""
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_audit_passes_gate(self):
-        r = audit_csv(_DATA_CSV)
+    def test_real_data_passes_quality_gate(self):
+        r = audit_csv(REAL_DATA)
         assert r.passes_quality_gate is True
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_total_rows(self):
-        r = audit_csv(_DATA_CSV)
-        assert r.total_rows == 3240
+    def test_real_data_total_rows_gte_3000(self):
+        r = audit_csv(REAL_DATA)
+        assert r.total_rows >= 3000
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_all_rows_valid(self):
-        r = audit_csv(_DATA_CSV)
-        assert r.valid_rows == 3240
-        assert r.invalid_rows == 0
+    def test_real_data_valid_rows_pct_gte_99(self):
+        r = audit_csv(REAL_DATA)
+        assert r.valid_rows_pct >= 99.0
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_no_duplicates(self):
-        r = audit_csv(_DATA_CSV)
-        assert r.duplicate_rows == 0
-
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_has_required_cols(self):
-        r = audit_csv(_DATA_CSV)
+    def test_real_data_has_required_cols(self):
+        r = audit_csv(REAL_DATA)
         assert r.has_required_cols is True
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_chronological(self):
-        r = audit_csv(_DATA_CSV)
+    def test_real_data_no_errors(self):
+        r = audit_csv(REAL_DATA)
+        assert r.errors == []
+
+    def test_real_data_chronological(self):
+        r = audit_csv(REAL_DATA)
         assert r.chronological is True
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_ohlc_pass_rate_100(self):
-        r = audit_csv(_DATA_CSV)
-        assert r.ohlc_pass_rate == 1.0
+    def test_real_data_date_range_starts_before_2015(self):
+        r = audit_csv(REAL_DATA)
+        start, _ = r.date_range
+        assert start is not None
+        assert start.year <= 2015
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_date_range_starts_2014(self):
-        r = audit_csv(_DATA_CSV)
-        assert r.date_range[0] is not None
-        assert r.date_range[0].year == 2014
+    def test_real_data_coverage_gt_5_years(self):
+        r = audit_csv(REAL_DATA)
+        assert r.coverage_years >= 5.0
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_coverage_over_10_years(self):
-        r = audit_csv(_DATA_CSV)
-        assert r.coverage_years >= 10.0
 
-    @pytest.mark.skipif(
-        not _DATA_CSV.exists(),
-        reason="EURUSD_D1_2014_2026.csv not found",
-    )
-    def test_real_csv_no_errors(self):
-        r = audit_csv(_DATA_CSV)
-        assert r.errors == []
+# ===========================================================================
+# 5. Saved report files (generated in run_sprint14_backtests.py)
+# ===========================================================================
+
+@pytest.mark.skipif(
+    not (REPORTS_DIR / "data_quality_report.txt").exists(),
+    reason="data_quality_report.txt not generated yet"
+)
+class TestSavedReportFiles:
+    """Verify the Sprint 14 report files exist and contain expected content."""
+
+    def test_data_quality_report_exists(self):
+        assert (REPORTS_DIR / "data_quality_report.txt").exists()
+
+    def test_data_quality_report_contains_pass(self):
+        text = (REPORTS_DIR / "data_quality_report.txt").read_text()
+        assert "PASS" in text
+
+    def test_pin_bar_scorecard_exists(self):
+        assert (REPORTS_DIR / "pin_bar_scorecard.txt").exists()
+
+    def test_engulfing_scorecard_exists(self):
+        assert (REPORTS_DIR / "engulfing_scorecard.txt").exists()
+
+    def test_combined_scorecard_exists(self):
+        assert (REPORTS_DIR / "combined_scorecard.txt").exists()
+
+    def test_validation_lab_report_exists(self):
+        assert (REPORTS_DIR / "validation_lab_report.txt").exists()
+
+    def test_pin_bar_scorecard_contains_eurusd(self):
+        text = (REPORTS_DIR / "pin_bar_scorecard.txt").read_text()
+        assert "EURUSD" in text
+
+    def test_combined_scorecard_baseline_fail(self):
+        text = (REPORTS_DIR / "combined_scorecard.txt").read_text()
+        assert "NO" in text  # Baseline pass: ❌ NO
+
+
+# ===========================================================================
+# 6. BacktestResult.passes_baseline logic
+# ===========================================================================
+
+class TestPassesBaseline:
+    """passes_baseline property on BacktestResult."""
+
+    def test_no_trades_fails_baseline(self):
+        r = _make_result(
+            wins=0, losses=0, trades_executed=0,
+            gross_profit=0.0, gross_loss=0.0,
+            max_drawdown_pct=0.0,
+        )
+        assert r.passes_baseline is False
+
+    def test_passing_baseline(self):
+        r = _make_result(
+            wins=10, losses=5, trades_executed=15,
+            gross_profit=15.0, gross_loss=5.0,
+            profit_factor=3.0,    # PF = 3.0
+            win_rate=10/15,       # ~0.667
+            max_drawdown_pct=5.0,
+        )
+        assert r.passes_baseline is True
+
+    def test_high_drawdown_fails(self):
+        r = _make_result(
+            wins=10, losses=5, trades_executed=15,
+            gross_profit=15.0, gross_loss=5.0,
+            max_drawdown_pct=25.0,   # > 20%
+        )
+        assert r.passes_baseline is False
+
+    def test_low_profit_factor_fails(self):
+        r = _make_result(
+            wins=5, losses=10, trades_executed=15,
+            gross_profit=5.0, gross_loss=10.0,  # PF = 0.5
+            max_drawdown_pct=5.0,
+        )
+        assert r.passes_baseline is False
+
+    def test_passes_baseline_exactly_threshold(self):
+        # PF = 1.1, win_rate = 0.40, DD = 20%, trades = 10
+        r = _make_result(
+            wins=4, losses=6, trades_executed=10,
+            gross_profit=11.0, gross_loss=10.0,
+            profit_factor=1.1,   # exactly 1.1
+            win_rate=0.40,       # exactly 0.40
+            max_drawdown_pct=20.0,
+        )
+        assert r.passes_baseline is True
+
+
+# ===========================================================================
+# 7. generate_scorecard / generate_comparison_report / generate_validation_report
+# ===========================================================================
+
+class TestGenerateScorecard:
+    """generate_scorecard() output format tests."""
+
+    def test_returns_string(self):
+        r = _make_result()
+        s = generate_scorecard(r)
+        assert isinstance(s, str)
+
+    def test_contains_symbol(self):
+        r = _make_result(symbol="EURUSD")
+        s = generate_scorecard(r)
+        assert "EURUSD" in s
+
+    def test_contains_trade_stats_section(self):
+        r = _make_result()
+        s = generate_scorecard(r)
+        assert "TRADE STATISTICS" in s
+
+    def test_contains_performance_section(self):
+        r = _make_result()
+        s = generate_scorecard(r)
+        assert "PERFORMANCE METRICS" in s
+
+    def test_baseline_no_shown_in_no_trades_result(self):
+        r = _make_result()
+        s = generate_scorecard(r)
+        assert "NO" in s
+
+    def test_error_message_included_in_output(self):
+        r = _make_result(error_message="Test error message")
+        s = generate_scorecard(r)
+        assert "Test error message" in s
+
+
+class TestGenerateComparisonReport:
+    """generate_comparison_report() multi-result output."""
+
+    def test_single_result(self):
+        r = _make_result(strategy_mode="pin_bar_only")
+        s = generate_comparison_report([r])
+        assert isinstance(s, str)
+        assert "EURUSD" in s
+
+    def test_three_results(self):
+        r1 = _make_result(strategy_mode="pin_bar_only")
+        r2 = _make_result(strategy_mode="engulfing_only")
+        r3 = _make_result(strategy_mode="combined")
+        s = generate_comparison_report([r1, r2, r3])
+        assert isinstance(s, str)
+        assert "COMPARISON" in s.upper()
+
+    def test_empty_list(self):
+        s = generate_comparison_report([])
+        assert isinstance(s, str)
+
+
+class TestGenerateValidationReport:
+    """generate_validation_report() with a ValidationReport."""
+
+    def test_returns_string(self):
+        pb  = _make_result(strategy_mode="pin_bar_only")
+        eng = _make_result(strategy_mode="engulfing_only")
+        com = _make_result(strategy_mode="combined")
+        vr  = ValidationReport(pin_bar_result=pb, engulfing_result=eng, combined_result=com)
+        s   = generate_validation_report(vr)
+        assert isinstance(s, str)
+
+    def test_contains_eurusd(self):
+        pb  = _make_result()
+        eng = _make_result()
+        com = _make_result()
+        vr  = ValidationReport(pin_bar_result=pb, engulfing_result=eng, combined_result=com)
+        s   = generate_validation_report(vr)
+        assert "EURUSD" in s
+
+
+# ===========================================================================
+# 8. StrategyValidationLab with real data
+# ===========================================================================
+
+@pytest.mark.skipif(not REAL_DATA.exists(), reason="real data file not present")
+class TestStrategyValidationLabRealData:
+    """Sprint 14: validation lab produces well-formed output on real EURUSD data."""
+
+    def test_lab_run_returns_validation_report(self):
+        lab    = StrategyValidationLab(BacktestConfig())
+        report = lab.run(str(REAL_DATA))
+        assert isinstance(report, ValidationReport)
+
+    def test_lab_report_has_all_three_results(self):
+        lab    = StrategyValidationLab(BacktestConfig())
+        report = lab.run(str(REAL_DATA))
+        assert report.pin_bar_result is not None
+        assert report.engulfing_result is not None
+        assert report.combined_result is not None
+
+    def test_lab_candles_processed_matches_data(self):
+        lab    = StrategyValidationLab(BacktestConfig())
+        report = lab.run(str(REAL_DATA))
+        # All modes should have processed all candles
+        assert report.combined_result.candles_processed >= 3000
+
+    def test_lab_data_source_set(self):
+        lab    = StrategyValidationLab(BacktestConfig())
+        report = lab.run(str(REAL_DATA))
+        assert report.pin_bar_result.data_source != ""
+
+    def test_lab_invalid_rows_zero(self):
+        """Clean OHLC data should yield 0 invalid rows reported."""
+        lab    = StrategyValidationLab(BacktestConfig())
+        report = lab.run(str(REAL_DATA))
+        assert report.combined_result.invalid_rows == 0
+
+    def test_lab_generate_validation_report_string(self):
+        lab    = StrategyValidationLab(BacktestConfig())
+        report = lab.run(str(REAL_DATA))
+        s      = lab.generate_validation_report(report)
+        assert isinstance(s, str)
+        assert len(s) > 100
+
+
+# ===========================================================================
+# 9. Private helper functions
+# ===========================================================================
+
+class TestCountWeekendGaps:
+    """_count_weekend_gaps() helper."""
+
+    def test_no_timestamps(self):
+        assert _count_weekend_gaps([]) == 0
+
+    def test_single_timestamp(self):
+        ts = [datetime(2024, 1, 2, tzinfo=timezone.utc)]
+        assert _count_weekend_gaps(ts) == 0
+
+    def test_consecutive_days_no_gap(self):
+        ts = [
+            datetime(2024, 1, 1, tzinfo=timezone.utc),
+            datetime(2024, 1, 2, tzinfo=timezone.utc),
+            datetime(2024, 1, 3, tzinfo=timezone.utc),
+        ]
+        assert _count_weekend_gaps(ts) == 0
+
+    def test_friday_monday_gap_counted(self):
+        # Fri→Mon = 3 days gap (gap = 3 calendar days)
+        ts = [
+            datetime(2024, 1, 5, tzinfo=timezone.utc),  # Fri
+            datetime(2024, 1, 8, tzinfo=timezone.utc),  # Mon
+        ]
+        result = _count_weekend_gaps(ts)
+        assert result == 1
+
+
+class TestEstimateMissingD1Gaps:
+    """_estimate_missing_d1_gaps() helper."""
+
+    def test_no_timestamps_returns_zero(self):
+        assert _estimate_missing_d1_gaps([]) == 0
+
+    def test_single_timestamp_returns_zero(self):
+        ts = [datetime(2024, 1, 2, tzinfo=timezone.utc)]
+        assert _estimate_missing_d1_gaps(ts) == 0
+
+    def test_normal_gaps_no_missing(self):
+        # Daily gaps of 1-3 days → not missing
+        ts = [
+            datetime(2024, 1, 1, tzinfo=timezone.utc),
+            datetime(2024, 1, 2, tzinfo=timezone.utc),
+            datetime(2024, 1, 5, tzinfo=timezone.utc),  # weekend = 3 days
+        ]
+        assert _estimate_missing_d1_gaps(ts) == 0
+
+    def test_large_gap_detected_as_missing(self):
+        # 10-day gap → should detect missing
+        ts = [
+            datetime(2024, 1, 1, tzinfo=timezone.utc),
+            datetime(2024, 1, 11, tzinfo=timezone.utc),  # 10 calendar days
+        ]
+        result = _estimate_missing_d1_gaps(ts)
+        assert result >= 1

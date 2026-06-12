@@ -2,7 +2,7 @@
 ## Verdict: INSUFFICIENT DATA / READY — BLOCKED-ON-DATA
 
 **Generated:** 2026-06-12  
-**Sprint 16 HEAD:** [to be filled at commit time]  
+**Sprint 16 HEAD:** `3f3f797`  
 **Sprint 15 HEAD:** `2f4761b` (reference)
 
 ---

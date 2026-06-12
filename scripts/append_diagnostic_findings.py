@@ -1,61 +1,13 @@
-============================================================
-  STRATEGY VALIDATION LAB — PHASE 1 REPORT
-============================================================
+"""
+Append Sprint 14 diagnostic findings to the validation lab report.
+Documents the root cause of 0 trades and the corrected-wiring evidence.
+"""
+import sys
+sys.path.insert(0, '.')
 
-  Generated  : 2026-06-12 01:24 UTC
-  Symbol     : EURUSD
-  Timeframe  : D1
+from pathlib import Path
 
-── STRATEGY RANKINGS ───────────────────────────────────
-  🥇 #1  PIN BAR               PF=0.00    Exp=+0.000R  WR=0.0%  DD=0.0%  Trades=0
-  🥈 #2  ENGULFING BAR         PF=0.00    Exp=+0.000R  WR=0.0%  DD=0.0%  Trades=0
-  🥉 #3  COMBINED              PF=0.00    Exp=+0.000R  WR=0.0%  DD=0.0%  Trades=0
-
-── KEY FINDINGS ────────────────────────────────────────
-  Best strategy    : PIN BAR
-  Worst strategy   : COMBINED
-  Highest PF       : 0.00 (PIN BAR)
-  Highest Exp      : +0.000R (PIN BAR)
-  Lowest Drawdown  : 0.00% ()
-
-── SIDE-BY-SIDE METRICS ────────────────────────────────
-============================================================
-  STRATEGY COMPARISON REPORT
-============================================================
-
-  METRIC                PIN BAR           ENGULFING BAR     COMBINED          
-                        ────────────────  ────────────────  ────────────────  
-  Symbol                EURUSD            EURUSD            EURUSD            
-  Timeframe             D1                D1                D1                
-                                                                              
-  Candles proc          3240              3240              3240              
-  Trades exec           0                 0                 0                 
-  Wins                  0                 0                 0                 
-  Losses                0                 0                 0                 
-  Win Rate              0.0%              0.0%              0.0%              
-                                                                              
-  Net P&L               $+0               $+0               $+0               
-  Profit Factor         0.00              0.00              0.00              
-  Expectancy            +0.000R           +0.000R           +0.000R           
-  Average R             +0.000R           +0.000R           +0.000R           
-  Max Drawdown          0.00%             0.00%             0.00%             
-  Max Con Wins          0                 0                 0                 
-  Max Con Loss          0                 0                 0                 
-                                                                              
-  Baseline              ❌                 ❌                 ❌                 
-                                                                              
-  BAD_SIGNAL            0                 0                 0                 
-  BAD_REGIME            0                 0                 0                 
-  BAD_LEVEL             0                 0                 0                 
-  BAD_EXEC              0                 0                 0                 
-  NORMAL_STAT           0                 0                 0                 
-
-============================================================
-
-── RECOMMENDATIONS ─────────────────────────────────────
-  1. Insufficient trades to evaluate edge. Use a longer historical dataset (recommend ≥ 500 candles).
-
-============================================================
+DIAGNOSTIC_SECTION = """
 
 ============================================================
   SPRINT 14 DIAGNOSTIC INVESTIGATION
@@ -150,3 +102,14 @@
       Sufficient sample for baseline edge measurement
 
 ============================================================
+"""
+
+val_path = Path('reports/validation_lab_report.txt')
+existing = val_path.read_text()
+val_path.write_text(existing + DIAGNOSTIC_SECTION)
+print(f"Appended diagnostic section to {val_path}")
+
+# Also write a standalone diagnostic summary
+diag_path = Path('reports/diagnostic_findings.txt')
+diag_path.write_text(DIAGNOSTIC_SECTION.strip())
+print(f"Wrote standalone diagnostic to {diag_path}")

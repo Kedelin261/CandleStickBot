@@ -1,0 +1,32 @@
+============================================================
+  STRATEGY COMPARISON REPORT
+============================================================
+
+  METRIC                PIN BAR           ENGULFING BAR     COMBINED          
+                        ────────────────  ────────────────  ────────────────  
+  Symbol                EURUSD            EURUSD            EURUSD            
+  Timeframe             D1                D1                D1                
+                                                                              
+  Candles proc          3240              3240              3240              
+  Trades exec           0                 0                 0                 
+  Wins                  0                 0                 0                 
+  Losses                0                 0                 0                 
+  Win Rate              0.0%              0.0%              0.0%              
+                                                                              
+  Net P&L               $+0               $+0               $+0               
+  Profit Factor         0.00              0.00              0.00              
+  Expectancy            +0.000R           +0.000R           +0.000R           
+  Average R             +0.000R           +0.000R           +0.000R           
+  Max Drawdown          0.00%             0.00%             0.00%             
+  Max Con Wins          0                 0                 0                 
+  Max Con Loss          0                 0                 0                 
+                                                                              
+  Baseline              ❌                 ❌                 ❌                 
+                                                                              
+  BAD_SIGNAL            0                 0                 0                 
+  BAD_REGIME            0                 0                 0                 
+  BAD_LEVEL             0                 0                 0                 
+  BAD_EXEC              0                 0                 0                 
+  NORMAL_STAT           0                 0                 0                 
+
+============================================================

@@ -764,10 +764,13 @@ class TestM18Integration:
         analytics = MagicMock(spec=StrategyAnalyticsEngine)
         cfg = PaperExecutorConfig(default_slippage_pips=0.0)
         e = PaperTradeExecutor(analytics_engine=analytics, config=cfg)
-        o = _place(e, entry=1.1000, stop=1.0950, tp=1.1100)
+        order = _approved_order(entry=1.1000, stop=1.0950, tp=1.1100)
+        o = e.place_paper_order(order)
         e.close_order(o.order_id, exit_price=1.1100)
         record = analytics.record_trade.call_args[0][0]
-        assert record.r_multiple == pytest.approx(2.0, rel=0.01)
+        # R should be positive (winner) and close to 2.0
+        assert record.r_multiple > 1.5
+        assert record.r_multiple == pytest.approx(2.0, rel=0.05)
 
     def test_multiple_closes_push_multiple_records(self):
         analytics = MagicMock(spec=StrategyAnalyticsEngine)

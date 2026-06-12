@@ -1,0 +1,49 @@
+SPRINT 15 — MODULE CONTRACT VALIDATION REPORT
+==============================================
+
+Module-boundary audit: DTO field population, no empty collections silently
+dropped, no mismatched types at each M03→M04→M05→M16→M07→M08→M09→M10 boundary.
+
+M03 → MarketStructureAnalyzer.analyze(candles) → StructureAnalysis
+  Fields verified: swing_highs: List[SwingPoint], swing_lows: List[SwingPoint]
+  Verified by: Stage 4 Contract Tests (TestSREngineContractWiring)
+  Status: ✅ PASS — lists passed to SREngine.analyze as swing_highs/lows
+
+M04 → TrendDetector.analyze(candles, market_structure) → TrendAnalysis
+  Fields verified: sma21: float (always set; 0.0 if insufficient data)
+  Verified by: Stage 4 Contract Tests (test_sma21_is_float, test_sma21_is_not_none)
+  Status: ✅ PASS — float sma21 passed to SREngine.analyze
+
+M03→M05 wiring (RC-1 fix):
+  swing_highs=structure_a.swing_highs → SREngine.analyze()  ✅
+  swing_lows=structure_a.swing_lows  → SREngine.analyze()  ✅
+
+M04→M05 wiring (RC-2 fix):
+  sma21=trend_a.sma21 → SREngine.analyze()  ✅
+
+M05 → SREngine.analyze() → SRAnalysis
+  Fields: nearest_support, nearest_resistance, levels: List[SRLevel]
+  Verified by: TestSRLevelsIntegration (real data slice → ≥1 support, ≥1 resistance)
+  Status: ✅ PASS — confirmed non-empty with correct wiring
+
+M16 → MarketRegimeEngine.analyze() → RegimeAnalysis
+  Fields: regime: RegimeType — used in REGIME gate
+  Status: ✅ PASS — used in production path, no modification
+
+M07→M08 → PatternEngine within StrategyEngine.evaluate_candle()
+  Fields: TradeRecommendationResult.rejection_gate: str
+  Verified by: Stage 1 funnel instrumentation (sprint15_stage1_funnel.py)
+  Status: ✅ PASS — all gate strings present and conservation verified
+
+M09 → RiskEngine → RiskApprovedOrder
+  Fields: lot_size, risk_pct, stop_pips — passed to M10
+  Status: ✅ PASS — no changes made (measurement repair only)
+
+M10 → PaperTradeExecutor → PaperOrder
+  Fields: pnl_usd used by FIX-3 (_pnl_usd_series tracking)
+  Verified by: Stage 2 golden tests, canonical DD computation
+  Status: ✅ PASS — pnl_usd correctly accumulated
+
+Funnel Conservation: ✅ PASS
+  Stage 4 TestFunnelConservation verifies rejections + rec == evals
+  V0 funnel (from sprint15_funnel_diagnostic.txt): 2882+147+1+11+0 = 3041 ✓

@@ -1,0 +1,37 @@
+SPRINT 15 — METRICS VALIDATION REPORT
+=======================================
+Stage 2: Golden tests written BEFORE any baseline re-run.
+All tests in tests/backtesting/test_sprint15_metrics_golden.py.
+
+── BEFORE FIX-3 (RC-3 state — peak=0.0) ──────────────────────────────────────
+_compute_max_drawdown([-1.0]) expected: ~1e11%
+  → Documented in TestComputeMaxDrawdownUnit::test_single_loss_produces_astronomical_dd
+  → Confirmed: legacy function returns > 1e9 (FAIL — as expected, proves RC-3)
+
+_compute_max_drawdown([-0.5]) expected: 5e10%+
+  → Confirmed by TestComputeMaxDrawdownUnit::test_r_multiple_half_loss_astronomical
+
+── AFTER FIX-3 (equity-seeded, initial_balance) ──────────────────────────────
+test_drawdown_equity_empty_series         : [] → 0.0%                    ✅ PASS
+test_drawdown_equity_first_loss_not_astro : [-100] from $10k → 1.0%     ✅ PASS
+test_drawdown_equity_canonical_golden     : [+100,-200,+50] from $10k
+  peak=10100, trough=9900, DD=(10100-9900)/10100×100 = 1.9802%          ✅ PASS
+test_drawdown_equity_all_winners          : [100,200,50] → 0.0%         ✅ PASS
+test_drawdown_equity_large_loss           : [500,-300] from $10k → 2.97% ✅ PASS
+
+── PROFIT FACTOR GOLDENS ──────────────────────────────────────────────────────
+[+2,-1,+2,-1,+3] gross_profit=7, gross_loss=2, PF=3.50               ✅ PASS
+[+1] gross_profit=1, gross_loss=0, PF=∞ (1e9 sentinel)               ✅ PASS
+All losses: PF=0.0                                                     ✅ PASS
+
+── EXPECTANCY GOLDENS ─────────────────────────────────────────────────────────
+3W/2L, avg_win=2.0R, avg_loss=1.0R: Exp = 3/5*2 - 2/5*1 = 0.80R     ✅ PASS
+Breakeven sequence: Exp = 0.0R                                         ✅ PASS
+
+── WIN RATE GOLDENS ───────────────────────────────────────────────────────────
+3W/2L → 60.0%, 0W/5L → 0.0%, 5W/0L → 100.0%                         ✅ PASS
+
+── SUMMARY ────────────────────────────────────────────────────────────────────
+42 golden tests: 42/42 PASS
+RC-3 documented: legacy function confirmed astronomical on first-loss input.
+FIX-3 validated: equity-seeded function matches §2 canonical to 4dp.

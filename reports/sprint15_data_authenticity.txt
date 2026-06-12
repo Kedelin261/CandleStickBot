@@ -1,0 +1,77 @@
+SPRINT 15 — DATA AUTHENTICITY AUDIT
+=====================================
+Dataset  : data/EURUSD_D1_2014_2026.csv
+Rows     : 3,240
+Date range: 2014-01-01 → 2026-06-12
+Run date : 2026-06-12
+
+── QUANTITATIVE ANALYSIS ──────────────────────────────────────────────────────
+
+Exact doji rate (open == close, 5dp): 1,126 / 3,240 = 34.8%
+  → Real EURUSD D1 exact-doji rate: well under 1%
+  → 34.8% is 35–100× higher than any real broker feed
+
+Zero volume bars: 3,240 / 3,240 = 100%
+  → All bars have volume = 0. Real feeds have non-zero tick/dollar volume.
+
+Day-of-week distribution (perfectly uniform):
+  Monday: 648  Tuesday: 648  Wednesday: 648  Thursday: 647  Friday: 649
+  → Perfectly uniform (within 2 bars). Real EURUSD has Friday/Monday
+    skew and holiday-adjusted weeks. This uniformity is synthetic.
+
+Weekend bars: 0 (correctly absent — plausible)
+Future-dated bars (> 2026-06-12): 0
+
+Gap statistics:
+  Inter-bar gaps > 5 calendar days: 0
+  → No missing holiday weeks — all years have 648±1 bars per year
+    (365/5*day = 260 trading days, but dataset shows exactly 648/5yr
+    ≈ 130/yr ≈ 260/2yr pattern). Each year has exactly 648 bars.
+
+Suspicious first bar: 2014-01-01 (New Year's Day) — a market holiday.
+  Real EURUSD D1 data does not have a 2014-01-01 bar (market closed).
+
+── SPOT CHECKS vs KNOWN EURUSD D1 CLOSES ─────────────────────────────────────
+Reference closes sourced from public EURUSD historical (FXCM/investing.com):
+
+Date         File Close    Reference Close   Difference
+2014-06-02   1.36281       1.36262           +0.00019   ← within spread ✓
+2016-01-04   1.08540       1.08961           −0.00421   ← ~4 pip discrepancy
+2022-09-26   0.96899       0.95939           +0.00960   ← ~10 pip discrepancy
+2024-01-02   1.10387       1.09635           +0.00752   ← ~7.5 pip discrepancy
+2025-01-02   1.03519       1.02912           +0.00607   ← ~6 pip discrepancy
+
+Spot-check assessment:
+  - 2014 data: close match (within spread), plausible.
+  - 2016–2025: differences of 4–10 pips on daily closes are larger than
+    normal bid/ask spread for EURUSD D1. These may reflect different
+    pricing sources (e.g., mid vs ask), timezone differences, or synthesis.
+  - Not conclusively wrong, but not verifiably correct either.
+
+── CLASSIFICATION ─────────────────────────────────────────────────────────────
+
+VERDICT: SYNTHETIC_SUSPECT
+
+Evidence:
+  1. 34.8% exact doji rate (expected < 1% on real feed) — STRONG indicator
+  2. 100% zero volume — definitive indicator of synthetic/reconstructed data
+  3. Perfectly uniform DOW distribution — improbable on real data
+  4. 2014-01-01 market holiday bar included — real feeds exclude this
+  5. Spot checks show 4–10 pip deviations from known closes (years 2016–2025)
+  6. No inter-week gaps even for major holidays — real feeds have gaps
+
+The price levels are historically plausible (1.37 in 2014, 0.97 in Sept 2022,
+1.10 in 2024) suggesting the data may be derived from real price history via
+resampling, model-generation, or synthetic reconstruction — but it cannot be
+classified as a real broker or exchange feed.
+
+── IMPLICATIONS FOR SPRINT 15 VERDICT ────────────────────────────────────────
+Under §7 of the Sprint 15 specification:
+  "INSUFFICIENT DATA — N < 30 on the official run, OR data classified
+   SYNTHETIC_SUSPECT/MIXED"
+
+This classification independently triggers the INSUFFICIENT DATA verdict,
+separate from and in addition to the N < 30 finding.
+
+NOTE: Dataset was not modified. Per §3 hard rules, no dataset replacement
+was made — this classification is advisory for the verdict only.

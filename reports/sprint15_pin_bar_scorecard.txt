@@ -1,0 +1,63 @@
+============================================================
+  PIN BAR — STRATEGY SCORECARD
+============================================================
+
+── EXECUTIVE SUMMARY ──────────────────────────────────
+  Symbol        : EURUSD
+  Timeframe     : D1
+  Strategy mode : pin_bar_only
+  Data source   : <candles>
+  Date range    : 2014-01-01 → 2026-06-12
+  Run completed : 2026-06-12 02:22 UTC
+  Candles proc  : 3240
+
+── TRADE STATISTICS ────────────────────────────────────
+  Generated     : 4
+  Approved      : 4
+  Rejected      : 0
+  Executed      : 4
+  Wins          : 0
+  Losses        : 4
+  Win Rate      : 0.0%
+  Max consec W  : 0
+  Max consec L  : 4
+
+── PERFORMANCE METRICS ─────────────────────────────────
+  Initial Bal   : $10,000.00
+  Final Bal     : $9,602.73
+  Net P&L       : $-397.27
+  Gross Profit  : 0.000R
+  Gross Loss    : 4.000R
+  Profit Factor : 0.00
+  Expectancy    : -1.000R
+  Average R     : -1.000R
+  Max Drawdown  : 3.97%
+  Baseline pass : ❌ NO
+
+── STRATEGY BREAKDOWN ──────────────────────────────────
+  PIN_BAR
+    Trades   : 4
+    Wins     : 0
+    Losses   : 4
+    Win Rate : 0.0%
+    PF       : 0.00
+    Exp      : -1.000R
+    Avg Win  : +0.000R
+    Avg Loss : +1.000R
+    Max DD   : 0.00%
+  ENGULFING_BAR        — no trades
+
+── REVIEW ANALYSIS (M19) ───────────────────────────────
+  BAD_SIGNAL          : 0
+  BAD_REGIME          : 0
+  BAD_LEVEL           : 0
+  BAD_EXECUTION       : 0
+  NORMAL_STATISTICAL  : 4
+
+── DATA QUALITY ────────────────────────────────────────
+  Candles loaded : 3240
+  Duplicates     : 0
+  Missing gaps   : 0
+  Invalid rows   : 0
+
+============================================================

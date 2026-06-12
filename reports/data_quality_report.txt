@@ -1,0 +1,25 @@
+════════════════════════════════════════════════════════════
+  DATA QUALITY AUDIT REPORT — EURUSD D1
+════════════════════════════════════════════════════════════
+  File           : EURUSD_D1_2014_2026.csv
+  Symbol         : EURUSD
+  Timeframe      : D1
+  Date range     : 2014-01-01 → 2026-06-12
+  Coverage       : 12.44 years
+════════════════════════════════════════════════════════════
+  Total rows     : 3240
+  Valid rows     : 3240  (100.00%)
+  Invalid rows   : 0  (0.00%)
+  Duplicate rows : 0
+  Missing dates  : 1 estimated gaps
+  Weekend gaps   : 654
+════════════════════════════════════════════════════════════
+  Has req cols   : ✅ YES
+  Chronological  : ✅ YES
+  OHLC pass rate : 100.00%
+════════════════════════════════════════════════════════════
+  Warnings       :
+    ⚠️  1 estimated missing trading-day gap(s) detected
+════════════════════════════════════════════════════════════
+  Quality gate   : ✅ PASS — backtesting may proceed
+════════════════════════════════════════════════════════════

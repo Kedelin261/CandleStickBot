@@ -1,0 +1,58 @@
+============================================================
+  STRATEGY VALIDATION LAB — PHASE 1 REPORT
+============================================================
+
+  Generated  : 2026-06-12 01:19 UTC
+  Symbol     : EURUSD
+  Timeframe  : D1
+
+── STRATEGY RANKINGS ───────────────────────────────────
+  🥇 #1  PIN BAR               PF=0.00    Exp=+0.000R  WR=0.0%  DD=0.0%  Trades=0
+  🥈 #2  ENGULFING BAR         PF=0.00    Exp=+0.000R  WR=0.0%  DD=0.0%  Trades=0
+  🥉 #3  COMBINED              PF=0.00    Exp=+0.000R  WR=0.0%  DD=0.0%  Trades=0
+
+── KEY FINDINGS ────────────────────────────────────────
+  Best strategy    : PIN BAR
+  Worst strategy   : COMBINED
+  Highest PF       : 0.00 (PIN BAR)
+  Highest Exp      : +0.000R (PIN BAR)
+  Lowest Drawdown  : 0.00% ()
+
+── SIDE-BY-SIDE METRICS ────────────────────────────────
+============================================================
+  STRATEGY COMPARISON REPORT
+============================================================
+
+  METRIC                PIN BAR           ENGULFING BAR     COMBINED          
+                        ────────────────  ────────────────  ────────────────  
+  Symbol                EURUSD            EURUSD            EURUSD            
+  Timeframe             D1                D1                D1                
+                                                                              
+  Candles proc          3240              3240              3240              
+  Trades exec           0                 0                 0                 
+  Wins                  0                 0                 0                 
+  Losses                0                 0                 0                 
+  Win Rate              0.0%              0.0%              0.0%              
+                                                                              
+  Net P&L               $+0               $+0               $+0               
+  Profit Factor         0.00              0.00              0.00              
+  Expectancy            +0.000R           +0.000R           +0.000R           
+  Average R             +0.000R           +0.000R           +0.000R           
+  Max Drawdown          0.00%             0.00%             0.00%             
+  Max Con Wins          0                 0                 0                 
+  Max Con Loss          0                 0                 0                 
+                                                                              
+  Baseline              ❌                 ❌                 ❌                 
+                                                                              
+  BAD_SIGNAL            0                 0                 0                 
+  BAD_REGIME            0                 0                 0                 
+  BAD_LEVEL             0                 0                 0                 
+  BAD_EXEC              0                 0                 0                 
+  NORMAL_STAT           0                 0                 0                 
+
+============================================================
+
+── RECOMMENDATIONS ─────────────────────────────────────
+  1. Insufficient trades to evaluate edge. Use a longer historical dataset (recommend ≥ 500 candles).
+
+============================================================

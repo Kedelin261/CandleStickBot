@@ -1,0 +1,54 @@
+============================================================
+  ENGULFING BAR — STRATEGY SCORECARD
+============================================================
+
+── EXECUTIVE SUMMARY ──────────────────────────────────
+  Symbol        : EURUSD
+  Timeframe     : D1
+  Strategy mode : engulfing_only
+  Data source   : data/EURUSD_D1_2014_2026.csv
+  Date range    : 2014-01-01 → 2026-06-12
+  Run completed : 2026-06-12 01:19 UTC
+  Candles proc  : 3240
+
+── TRADE STATISTICS ────────────────────────────────────
+  Generated     : 0
+  Approved      : 0
+  Rejected      : 0
+  Executed      : 0
+  Wins          : 0
+  Losses        : 0
+  Win Rate      : 0.0%
+  Max consec W  : 0
+  Max consec L  : 0
+
+── PERFORMANCE METRICS ─────────────────────────────────
+  Initial Bal   : $10,000.00
+  Final Bal     : $10,000.00
+  Net P&L       : $+0.00
+  Gross Profit  : 0.000R
+  Gross Loss    : 0.000R
+  Profit Factor : 0.00
+  Expectancy    : +0.000R
+  Average R     : +0.000R
+  Max Drawdown  : 0.00%
+  Baseline pass : ❌ NO
+
+── STRATEGY BREAKDOWN ──────────────────────────────────
+  PIN_BAR              — no trades
+  ENGULFING_BAR        — no trades
+
+── REVIEW ANALYSIS (M19) ───────────────────────────────
+  BAD_SIGNAL          : 0
+  BAD_REGIME          : 0
+  BAD_LEVEL           : 0
+  BAD_EXECUTION       : 0
+  NORMAL_STATISTICAL  : 0
+
+── DATA QUALITY ────────────────────────────────────────
+  Candles loaded : 3240
+  Duplicates     : 0
+  Missing gaps   : 1
+  Invalid rows   : 0
+
+============================================================
